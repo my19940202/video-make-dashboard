@@ -35,17 +35,44 @@
 `npm run check` 运行类型检查和无需生图额度的关键关卡测试。真实端到端运行需要 DeepSeek 和本机 Codex imagegen 可用；分镜和图片均不会自动越过审核。
 
 
-## PPT 视频工作台（新）
+## 法律案例视频工作台
 
-访问 `http://127.0.0.1:4112/workbench`：粘贴案例材料，系统按 6–8 页生成脚本；依次确认脚本与首张样稿，再自动完成其他配图和视频合成。文字和背景音乐修改不会触发重新生图；单页可单独重画。任务与图片保存在 `data/ppt/<taskId>`，重启后会恢复正在执行的阶段。
+访问 `http://127.0.0.1:4112/workbench`，粘贴案例材料后，DeepSeek 会生成 6–8 页脚本。确认脚本后先生成首张样稿；确认样稿后按页顺序生成其余配图并导出视频。每页可单独重画。任务保存在 `data/ppt/<taskId>`，中断后可在工作台重试。
 
-PPT 生图调用本机 `local-image-gen` 的异步 API（默认 `http://127.0.0.1:3000`），该服务默认最多并行 2 张，可用 `IMAGE_CONCURRENCY=1..4` 设置。每张图带稳定幂等键；参考图由首张已完成配图提供。可通过 `IMAGE_API_URL` 指定服务地址。PPT 导出使用系统 FFmpeg 与 macOS 中文字体（也可用 `PPT_FONT` 指定字体），页面图片和视频片段按内容缓存，成片保存在项目任务目录，可从工作台播放或下载。背景音乐从工作台导入 MP3/WAV。
+### 生图流程
 
-开发中如已有一个 `mastra dev` 实例在运行，请使用该实例的工作台路由；Mastra 开发服务对同一项目采用单实例锁。
+此工作台使用本机 Draw Things 的 HTTP 服务，默认地址为 `http://127.0.0.1:7860`，可通过 `DRAW_THINGS_URL` 修改。启动工作台前，在 Draw Things 中开启 HTTP 服务并加载 `z_image_turbo_1.0_q8p.ckpt`。程序向 `/sdapi/v1/txt2img` 发送每页的插画提示词，固定使用空负面提示词、768×768、8 steps、guidance scale 1、`UniPC Trailing`、shift 3 和随机种子。每次请求最多等待 300 秒。
 
+服务在 `images[0]` 返回 base64 图片；程序解码并检查 PNG 尺寸，然后保存为页面图片。首张样稿必须经人工确认。后续页面沿用统一画风和人物描述，但 `txt2img` 不传首图作为参考图，因此人物一致性仍需人工检查。生图失败时保留已经完成的图片，修复服务后在工作台重试；修改文字、时长、音乐或入场动效不会重新生图，修改配图描述只会重画对应页。
 
-### 本地 API 调用选项
+每页可选淡入、模糊显现或飘入，标题、配图和正文依次出现。工作台用 SVG/CSS 预览，成片用 FFmpeg 渲染对应动效。导出依赖系统 FFmpeg 和支持中文的字体；可通过 `PPT_FONT` 指定字体。背景音乐可在工作台导入 MP3/WAV。
 
-`POST /api/jobs` 仍支持只传 `prompt`，也可传 `aspect_ratio`（`16:9`、`9:16`、`1:1`）、`reference_ids`（最多 3 个已完成任务）及 `idempotency_key`（同键同请求返回已有任务，同键不同请求返回 409）。任务查询增加 `queue_ms`、`aspect_ratio` 和 `reference_ids` 字段。
+手动验证 Draw Things 接口：
 
-默认最大并发为 2，可用 `IMAGE_CONCURRENCY=1..4` 配置。Codex 会按每个任务的画幅生成，并读取参考图片以保持视觉一致。提示词限制为 1–4200 字符。
+```bash
+curl -sS --max-time 300 \
+  -X POST http://127.0.0.1:7860/sdapi/v1/txt2img \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "z_image_turbo_1.0_q8p.ckpt",
+    "prompt": "一只坐在窗台上的橘猫，午后阳光，写实摄影",
+    "negative_prompt": "",
+    "width": 768,
+    "height": 768,
+    "steps": 8,
+    "guidance_scale": 1,
+    "sampler": "UniPC Trailing",
+    "shift": 3,
+    "seed": -1
+  }' \
+  | python3 -c '
+import sys, json, base64
+image = json.load(sys.stdin)["images"][0]
+if image.startswith("data:"):
+    image = image.split(",", 1)[1]
+open("output.png", "wb").write(base64.b64decode(image))
+print("saved output.png")
+'
+```
+
+Story Make 手绘故事是独立流程，仍通过 Codex 内置 imagegen 生成角色和场景图；`DRAW_THINGS_URL` 只影响法律案例工作台。

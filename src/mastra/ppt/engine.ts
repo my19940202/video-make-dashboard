@@ -6,17 +6,11 @@ import { z } from 'zod';
 import { appRoot, rendererRoot } from '../lib/config';
 import { runCommand } from '../lib/process';
 import { pageSchema, projectDir, read, save, musicFile, type Project, type Page } from './store';
+import { generateImage } from './draw-things';
 
 const generatedSchema = z.object({pages:z.array(pageSchema.omit({id:true})).min(6).max(8)});
 const agent = new Agent({id:'ppt-planner', name:'案例视频分页', model:'deepseek/deepseek-flash',
   instructions:'把用户材料整理为无配音的竖屏案例解读PPT，按要点组织6至8页，不逐句拆图。只使用提供的事实，不编造法律依据或案件结论。每页标题不超过32字，正文不超过180字且必须独立可读，配图提示词不包含文字排版要求。默认极简编辑插画、深蓝与浅蓝、白底。内容包括问题、经过、争议、结论、行动建议；材料不足时明确表达不确定性。单页4至30秒，总时长60至90秒。'});
-const apiBase = () => (process.env.IMAGE_API_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
-async function request(path: string, body?: unknown): Promise<any> {
-  const response = await fetch(`${apiBase()}${path}`, {method:body?'POST':'GET',
-    headers:body?{'content-type':'application/json'}:undefined, body:body?JSON.stringify(body):undefined, signal:AbortSignal.timeout(15_000)});
-  if (!response.ok) throw new Error(`生图服务 ${response.status}：${(await response.text()).slice(0,250)}`);
-  return response.json();
-}
 function current(id: string, revision: number) { const p=read(id); if(p.revision!==revision) throw new Error('版本已变更，停止旧任务'); return p; }
 function mutatePage(id:string, revision:number, pageId:string, fields:Partial<Page>) {
   const p=current(id,revision); const page=p.pages.find(x=>x.id===pageId); if(!page) throw new Error('页面已移除'); Object.assign(page,fields); save(p);
@@ -25,33 +19,11 @@ export async function imagePage(id:string, revision:number, pageId:string):Promi
   const p=current(id,revision); const page=p.pages.find(x=>x.id===pageId)!;
   if(page.image && existsSync(resolve(projectDir(id),page.image))) return;
   try {
-    let jobId=page.jobId;
-    if(!jobId) {
-      const sample=p.pages[0];
-      const job=await request('/api/jobs',{
-        prompt:`为竖屏法律案例知识卡绘制一张不含任何文字的插画。白底，深蓝与浅蓝配色，简洁清晰。人物设定与参考图保持一致。画面内容：${page.prompt}`,
-        aspect_ratio:'16:9', reference_ids:pageId!==sample.id && sample.jobId ? [sample.jobId] : [],
-        idempotency_key:`ppt-${id}-${pageId}-${page.imageVersion}`,
-      });
-      jobId=job.id; mutatePage(id,revision,pageId,{jobId,status:job.status});
-    }
-    const start=Date.now();
-    for(;;) {
-      const job=await request(`/api/jobs/${jobId}`);
-      mutatePage(id,revision,pageId,{status:job.status, queueMs:job.queue_ms ?? undefined, generationMs:job.duration_ms ?? undefined});
-      if(job.status==='failed') throw new Error(job.error || '生图失败');
-      if(job.status==='done') {
-        const res=await fetch(`${apiBase()}/api/jobs/${jobId}/image`,{signal:AbortSignal.timeout(30_000)});
-        if(!res.ok) throw new Error('下载图片失败');
-        const bytes=Buffer.from(await res.arrayBuffer());
-        if(bytes.length<33 || bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a' || bytes.readUInt32BE(16)<512 || bytes.readUInt32BE(20)<512) throw new Error('图片不是有效的至少512像素PNG');
-        current(id,revision);
-        const file=`${pageId}-${page.imageVersion}.png`; writeFileSync(resolve(projectDir(id),file),bytes);
-        mutatePage(id,revision,pageId,{image:file,status:'done',error:undefined}); return;
-      }
-      if(Date.now()-start>45*60_000) throw new Error('等待生图超时，可重试继续查询');
-      await new Promise(r=>setTimeout(r,1500));
-    }
+    mutatePage(id,revision,pageId,{status:'running'});
+    const {bytes,durationMs}=await generateImage(`为法律案例知识卡绘制一张不含任何文字的插画。统一风格：白底、深蓝与浅蓝、简洁清晰的编辑插画，人物造型与衣着保持前后一致。画面内容：${page.prompt}`);
+    current(id,revision);
+    const file=`${pageId}-${page.imageVersion}.png`; writeFileSync(resolve(projectDir(id),file),bytes);
+    mutatePage(id,revision,pageId,{image:file,status:'done',generationMs:durationMs,error:undefined}); return;
   } catch(error) { mutatePage(id,revision,pageId,{status:'failed',error:error instanceof Error?error.message:String(error)}); throw error; }
 }
 export async function executePhase(id:string):Promise<void> {
@@ -70,7 +42,8 @@ export async function executePhase(id:string):Promise<void> {
     if(p.phase==='sample') {
       await imagePage(id,revision,p.pages[0].id); p=current(id,revision); p.state='sample'; save(p); return;
     }
-    const results=await Promise.allSettled(p.pages.map(page=>imagePage(id,revision,page.id)));
+    const results: PromiseSettledResult<void>[]=[];
+    for(const page of p.pages) results.push((await Promise.allSettled([imagePage(id,revision,page.id)]))[0]);
     const failures=results.filter(r=>r.status==='rejected');
     if(failures.length) throw new Error(`${failures.length} 页生图失败；成功页面已保留，请查看页面错误后重试`);
     p=current(id,revision); p.state='rendering'; save(p);
@@ -99,14 +72,13 @@ export function approve(id:string, action:string, revision:number, pageId?:strin
     const page=p.pages.find(s=>s.id===pageId); if(!page) throw new Error('页面不存在');
     if(!p.scriptApproved) throw new Error('请先确认脚本');
     const affected=page===p.pages[0] ? p.pages : [page];
-    for(const item of affected) { item.imageVersion++; delete item.image; delete item.jobId; delete item.error; item.status='idle'; }
+    for(const item of affected) { item.imageVersion++; delete item.image; delete item.error; item.status='idle'; }
     if(page===p.pages[0]) p.sampleApproved=false;
     p.phase=p.sampleApproved?'produce':'sample'; p.state=p.sampleApproved?'producing':'sample-generating';
   } else if(action==='retry' || action==='render') {
     if(action==='render' && !p.sampleApproved) throw new Error('请先确认样稿');
     for(const page of p.pages) if(page.status==='failed') {
-      // Preserve a remote job after network failure; reconcile it before deciding to resubmit.
-      delete page.error; page.status=page.jobId?'pending':'idle';
+      delete page.error; page.status='idle';
     }
     p.phase=action==='render'?'produce':p.phase;
     p.state=p.phase==='draft'?'drafting':p.phase==='sample'?'sample-generating':'producing';
@@ -115,9 +87,6 @@ export function approve(id:string, action:string, revision:number, pageId?:strin
 }
 export async function reconcileFailed(id:string) {
   const p=read(id);
-  for(const page of p.pages) if(page.jobId && !page.image) {
-    const job=await request(`/api/jobs/${page.jobId}`);
-    if(job.status==='failed') { delete page.jobId; page.imageVersion++; page.status='idle'; }
-  }
+  for(const page of p.pages) if(!page.image && page.status==='running') page.status='idle';
   save(p);
 }

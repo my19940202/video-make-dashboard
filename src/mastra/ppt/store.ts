@@ -9,6 +9,7 @@ export const pageSchema = z.object({
   id: z.string().uuid(), title: z.string().trim().min(1).max(32),
   body: z.string().trim().min(1).max(180), prompt: z.string().trim().min(1).max(2500),
   duration: z.number().min(4).max(30),
+  entrance: z.enum(['fade','blur','float']).default('fade'),
 });
 export const editSchema = z.object({
   revision: z.number().int(), title: z.string().trim().min(1).max(60),
@@ -16,9 +17,9 @@ export const editSchema = z.object({
   musicId: z.string().uuid().nullable(), volume: z.number().min(0).max(1),
 });
 export type Page = z.infer<typeof pageSchema> & {
-  imageVersion: number; jobId?: string; image?: string;
-  status: 'idle'|'pending'|'running'|'done'|'failed'; error?: string;
-  generationMs?: number; queueMs?: number;
+  imageVersion: number; image?: string;
+  status: 'idle'|'running'|'done'|'failed'; error?: string;
+  generationMs?: number;
 };
 export type Project = {
   id: string; title: string; source: string; pages: Page[]; revision: number;
@@ -38,7 +39,15 @@ export function save(project: Project): Project {
   writeFileSync(`${file}.tmp`, JSON.stringify(project, null, 2)); renameSync(`${file}.tmp`, file);
   return project;
 }
-export function read(id: string): Project { return JSON.parse(readFileSync(resolve(projectDir(id), 'project.json'), 'utf8')); }
+export function read(id: string): Project {
+  const project=JSON.parse(readFileSync(resolve(projectDir(id), 'project.json'), 'utf8')) as Project;
+  for(const page of project.pages) {
+    const legacy=page as Page & {jobId?:string;queueMs?:number};
+    delete legacy.jobId; delete legacy.queueMs;
+    if((page.status as string)==='pending') page.status=page.image?'done':'idle';
+  }
+  return project;
+}
 export function list(): Project[] {
   mkdirSync(root, { recursive: true });
   return readdirSync(root).filter(id => z.string().uuid().safeParse(id).success)
@@ -62,7 +71,7 @@ export function update(id: string, input: unknown): Project {
   const changedSample = first && (first.id !== project.pages[0]?.id || first.prompt !== project.pages[0]?.prompt);
   if (changedSample) {
     project.sampleApproved = false;
-    for (const page of project.pages.slice(1)) { page.imageVersion++; delete page.image; delete page.jobId; page.status='idle'; }
+    for (const page of project.pages.slice(1)) { page.imageVersion++; delete page.image; page.status='idle'; }
   }
   Object.assign(project, {title:value.title, musicId:value.musicId, volume:value.volume});
   project.revision++; delete project.final; delete project.error;
