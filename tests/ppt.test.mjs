@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {mkdtempSync,writeFileSync,mkdirSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import test from 'node:test';
+import {build} from 'esbuild';
+const temp=mkdtempSync(join(tmpdir(),'ppt-test-'));
+process.env.STORY_MAKE_HOME=temp;
+await build({entryPoints:['src/mastra/ppt/store.ts'],bundle:true,platform:'node',format:'esm',outfile:join(temp,'store.mjs')});
+const {create,save,read,update,projectDir}=await import(pathToFileURL(join(temp,'store.mjs')));
+const {pageSvg}=await import(pathToFileURL(resolve('public/workbench/layout.mjs')));
+const page=(title)=>({id:randomUUID(),title,body:'这是一个案例要点。',prompt:'律师阅读合同',duration:10,imageVersion:1,status:'done',image:'old.png',jobId:randomUUID()});
+function ready(){const p=create('合同案例','案例材料');p.pages=[page('第一张'),page('第二张')];p.scriptApproved=true;p.sampleApproved=true;p.state='done';p.final='final.mp4';return save(p);}
+const edit=p=>({revision:p.revision,title:p.title,pages:p.pages,musicId:p.musicId,volume:p.volume});
+test('文字和音乐修改保留图片任务，仅使成片失效',()=>{const p=ready(),data=edit(p);data.pages[1].body='修改后的正文';data.volume=.4;const next=update(p.id,data);assert.equal(next.pages[1].image,'old.png');assert.equal(next.pages[1].jobId,p.pages[1].jobId);assert.equal(next.final,undefined);assert.equal(next.revision,p.revision+1);});
+test('修改一页配图提示只失效该页',()=>{const p=ready(),data=edit(p);data.pages[1].prompt='新画面';const next=update(p.id,data);assert.equal(next.pages[0].image,'old.png');assert.equal(next.pages[1].image,undefined);assert.equal(next.pages[1].imageVersion,2);});
+test('样稿风格或首页顺序改变会失效后续参考图',()=>{const p=ready(),data=edit(p);data.pages.reverse();const next=update(p.id,data);assert.equal(next.sampleApproved,false);assert.equal(next.pages[1].image,undefined);assert.equal(next.state,'sample');});
+test('拒绝旧版本写入、制作中编辑、重复页面ID和目录穿越',()=>{const p=ready();assert.throws(()=>update(p.id,{...edit(p),revision:0}),/已有更新/);const data=edit(p);data.pages=[p.pages[0],p.pages[0]];assert.throws(()=>update(p.id,data),/重复/);p.state='producing';save(p);assert.throws(()=>update(p.id,edit(p)),/制作中/);assert.throws(()=>projectDir('../escape'));});
+test('持久化状态可重新读取，版式转义文本并拒绝溢出',()=>{const p=ready();assert.deepEqual(read(p.id),p);assert.match(pageSvg({...p.pages[0],title:'<script>'},0,2),/&lt;script&gt;/);assert.throws(()=>pageSvg({...p.pages[0],body:'行\n'.repeat(20)},0,2),/超出/);});
