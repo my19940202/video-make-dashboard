@@ -14,7 +14,9 @@ const {create,save,read,update,projectDir}=await import(pathToFileURL(join(temp,
 const {pageSvg}=await import(pathToFileURL(resolve('public/workbench/layout.mjs')));
 const page=(title)=>({id:randomUUID(),title,body:'这是一个案例要点。',prompt:'律师阅读合同',duration:10,imageVersion:1,status:'done',image:'old.png'});
 function ready(){const p=create('合同案例','案例材料');p.pages=[page('第一张'),page('第二张')];p.scriptApproved=true;p.sampleApproved=true;p.state='done';p.final='final.mp4';return save(p);}
-const edit=p=>({revision:p.revision,title:p.title,styleId:p.styleId,pages:p.pages,musicId:p.musicId,volume:p.volume});
+const edit=p=>({revision:p.revision,title:p.title,styleId:p.styleId,narrativeMode:p.narrativeMode,pages:p.pages,musicId:p.musicId,volume:p.volume});
+test('新建童年回忆录保留口吻，旧项目默认为法律模式',()=>{const memoir=create('童年','我小时候的事','colored-pencil-diary','childhood-memoir');assert.equal(read(memoir.id).narrativeMode,'childhood-memoir');const old=ready();delete old.narrativeMode;save(old);assert.equal(read(old.id).narrativeMode,'legal-case');});
+test('口吻创建后不可切换',()=>{const p=ready(),data=edit(p);data.narrativeMode='childhood-memoir';assert.throws(()=>update(p.id,data),/不可更改/);assert.equal(read(p.id).narrativeMode,'legal-case');});
 test('新项目默认彩铅，旧项目沿用蓝白插画',()=>{const fresh=create('新项目','案例材料');assert.equal(fresh.styleId,'colored-pencil-diary');const old=ready();delete old.styleId;save(old);const loaded=read(old.id);assert.equal(loaded.styleId,'legacy-blue');assert.equal(loaded.pages[0].image,'old.png');});
 test('切换项目样式使所有图片失效并重新进入样稿审核',()=>{const p=ready(),data=edit(p);data.styleId='ink-wash';const next=update(p.id,data);assert.equal(next.styleId,'ink-wash');assert.equal(next.sampleApproved,false);assert.equal(next.state,'script');assert.equal(next.final,undefined);assert.ok(next.pages.every(page=>!page.image && page.status==='idle' && page.imageVersion===2));});
 test('文字和音乐修改保留图片，仅使成片失效',()=>{const p=ready(),data=edit(p);data.pages[1].body='修改后的正文';data.volume=.4;const next=update(p.id,data);assert.equal(next.pages[1].image,'old.png');assert.equal(next.final,undefined);assert.equal(next.revision,p.revision+1);});

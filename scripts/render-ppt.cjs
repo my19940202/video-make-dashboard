@@ -9,6 +9,7 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
 (async()=>{
  const props=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  const {pageSvg}=await import(pathToFileURL(path.resolve(__dirname,'../public/workbench/layout.mjs')));
+ const pageLabel=props.narrativeMode==='childhood-memoir'?'童年手记':'案例笔记';
  const cache=path.join(props.projectDir,'cache');fs.mkdirSync(cache,{recursive:true});
  const font=process.env.PPT_FONT || '/System/Library/Fonts/STHeiti Light.ttc';
  if(!fs.existsSync(font))throw new Error(`缺少中文字体：${font}。请设置 PPT_FONT 指向支持中文的字体文件。`);
@@ -16,7 +17,7 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
  for(let i=0;i<props.pages.length;i++){
   const page=props.pages[i];const imagePath=path.resolve(props.projectDir,page.image);
   if(!fs.existsSync(imagePath))throw new Error(`缺少第${i+1}页配图：${imagePath}`);
-  const image=fs.readFileSync(imagePath).toString('base64');const svg=pageSvg(page,i,props.pages.length,`data:image/png;base64,${image}`);
+  const image=fs.readFileSync(imagePath).toString('base64');const svg=pageSvg(page,i,props.pages.length,`data:image/png;base64,${image}`,false,props.narrativeMode);
   const pageHash=hash(svg+':layout-v2');const png=path.join(cache,pageHash+'.png');
   if(!fs.existsSync(png)){
    const textRoot=path.join(cache,pageHash);const titlePath=textRoot+'-title.txt',bodyPath=textRoot+'-body.txt';
@@ -24,7 +25,7 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
    if(title.length>3||body.length>10)throw new Error(`第${i+1}页文字超出版面，请缩短标题或正文。`);
    fs.writeFileSync(titlePath,title.join('\n'));fs.writeFileSync(bodyPath,body.join('\n'));
    const draw=(textfile,size,y,colour,spacing)=>`drawtext=fontfile=${font.replace(/ /g,'\\ ')}:textfile=${textfile}:fontcolor=${colour}:fontsize=${size}:line_spacing=${spacing}:x=88:y=${y}:expansion=none`;
-   const layout=`[0:v]drawbox=x=64:y=480:w=952:h=600:color=0xe9eef7:t=fill[base];[1:v]scale=920:568:force_original_aspect_ratio=decrease[art];[base][art]overlay=(W-w)/2:496,drawbox=x=88:y=96:w=8:h=32:color=0x355cce:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='案例笔记':fontcolor=0x546783:fontsize=25:x=116:y=96:expansion=none,${draw(titlePath,64,205,'0x172a46',18)},${draw(bodyPath,42,1190,'0x263b57',15)},drawbox=x=88:y=1810:w=904:h=1:color=0xd4deeb:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${String(i+1).padStart(2,'0')} / ${String(props.pages.length).padStart(2,'0')}':fontcolor=0x72829a:fontsize=24:x=88:y=1840:expansion=none,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${page.duration} 秒':fontcolor=0x72829a:fontsize=24:x=920:y=1840:expansion=none[v]`;
+   const layout=`[0:v]drawbox=x=64:y=480:w=952:h=600:color=0xe9eef7:t=fill[base];[1:v]scale=920:568:force_original_aspect_ratio=decrease[art];[base][art]overlay=(W-w)/2:496,drawbox=x=88:y=96:w=8:h=32:color=0x355cce:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${pageLabel}':fontcolor=0x546783:fontsize=25:x=116:y=96:expansion=none,${draw(titlePath,64,205,'0x172a46',18)},${draw(bodyPath,42,1190,'0x263b57',15)},drawbox=x=88:y=1810:w=904:h=1:color=0xd4deeb:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${String(i+1).padStart(2,'0')} / ${String(props.pages.length).padStart(2,'0')}':fontcolor=0x72829a:fontsize=24:x=88:y=1840:expansion=none,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${page.duration} 秒':fontcolor=0x72829a:fontsize=24:x=920:y=1840:expansion=none[v]`;
    try{cmd('ffmpeg',['-y','-v','error','-f','lavfi','-i','color=c=0xf6f8fc:s=1080x1920:r=1:d=1','-i',imagePath,'-filter_complex',layout,'-map','[v]','-frames:v','1',png]);}
    catch(error){throw new Error(`第${i+1}页排版失败：${error.message}`);}
   }

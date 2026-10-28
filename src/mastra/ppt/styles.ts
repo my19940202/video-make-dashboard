@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { NarrativeMode } from './narratives';
 
 export const styleIds = ['colored-pencil-diary', 'ink-wash', 'warm-flat-storybook', 'legacy-blue'] as const;
 export const styleIdSchema = z.enum(styleIds);
@@ -13,6 +14,7 @@ const stylePrompts: Record<StyleId, string> = {
   'legacy-blue': '白底、深蓝与浅蓝配色，简洁清晰的编辑插画。人物造型与衣着保持前后一致。',
 };
 
-export function imagePrompt(styleId: StyleId, scene: string): string {
-  return `为法律案例知识卡绘制一张插画。${stylePrompts[styleId]}画面内容：${scene}。画面内不含任何文字、数字、标注、印章、签名、标志或水印。`;
+export function imagePrompt(styleId: StyleId, scene: string, mode: NarrativeMode = 'legal-case'): string {
+  const purpose = mode === 'childhood-memoir' ? '为童年回忆录绘制一张叙事插画。' : '为法律案例知识卡绘制一张插画。';
+  return `${purpose}${stylePrompts[styleId]}画面内容：${scene}。画面内不含任何文字、数字、标注、印章、签名、标志或水印。`;
 }

@@ -8,10 +8,11 @@ import { runCommand } from '../lib/process';
 import { pageSchema, projectDir, read, save, musicFile, type Project, type Page } from './store';
 import { generateImage } from './draw-things';
 import { imagePrompt } from './styles';
+import { planningPrompt } from './narratives';
 
 const generatedSchema = z.object({pages:z.array(pageSchema.omit({id:true})).min(6).max(8)});
-const agent = new Agent({id:'ppt-planner', name:'案例视频分页', model:'deepseek/deepseek-flash',
-  instructions:'把用户材料整理为无配音的竖屏案例解读PPT，按要点组织6至8页，不逐句拆图。只使用提供的事实，不编造法律依据或案件结论。每页标题不超过32字，正文不超过180字且必须独立可读，配图提示词只描述画面内容，不包含文字排版或画风要求。内容包括问题、经过、争议、结论、行动建议；材料不足时明确表达不确定性。单页4至30秒，总时长60至90秒。'});
+const agent = new Agent({id:'ppt-planner', name:'视频分页', model:'deepseek/deepseek-flash',
+  instructions:'根据调用方指定的口吻整理用户材料，遵守事实边界和输出结构。不要把一种口吻的结构套用到另一种口吻。'});
 function current(id: string, revision: number) { const p=read(id); if(p.revision!==revision) throw new Error('版本已变更，停止旧任务'); return p; }
 function mutatePage(id:string, revision:number, pageId:string, fields:Partial<Page>) {
   const p=current(id,revision); const page=p.pages.find(x=>x.id===pageId); if(!page) throw new Error('页面已移除'); Object.assign(page,fields); save(p);
@@ -21,7 +22,7 @@ export async function imagePage(id:string, revision:number, pageId:string):Promi
   if(page.image && existsSync(resolve(projectDir(id),page.image))) return;
   try {
     mutatePage(id,revision,pageId,{status:'running'});
-    const {bytes,durationMs}=await generateImage(imagePrompt(p.styleId,page.prompt));
+    const {bytes,durationMs}=await generateImage(imagePrompt(p.styleId,page.prompt,p.narrativeMode));
     current(id,revision);
     const file=`${pageId}-${page.imageVersion}.png`; writeFileSync(resolve(projectDir(id),file),bytes);
     mutatePage(id,revision,pageId,{image:file,status:'done',generationMs:durationMs,error:undefined}); return;
@@ -32,7 +33,7 @@ export async function executePhase(id:string):Promise<void> {
   p.phaseStartedAt=Date.now(); delete p.error; save(p);
   try {
     if(p.phase==='draft') {
-      const response=await agent.generate(`标题：${p.title}\n材料：\n${p.source}`,{structuredOutput:{schema:generatedSchema}});
+      const response=await agent.generate(planningPrompt(p.narrativeMode,p.title,p.source),{structuredOutput:{schema:generatedSchema}});
       const generated=generatedSchema.parse(response.object);
       p=current(id,revision);
       const raw=generated.pages.map(page=>Math.max(7,Math.min(15,Math.ceil(page.body.length/5))));

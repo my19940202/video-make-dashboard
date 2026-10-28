@@ -15,4 +15,7 @@ test('四种样式分别组合画面描述且不混入蓝白限制',()=>{
   assert.match(prompts[2],/暖色几何扁平绘本/);
   assert.match(prompts[3],/深蓝与浅蓝/);
   assert.ok(prompts.slice(0,3).every(prompt=>!prompt.includes('深蓝与浅蓝')));
+  const memoir=imagePrompt('colored-pencil-diary','我和奶奶在院子里','childhood-memoir');
+  assert.match(memoir,/童年回忆录/);
+  assert.doesNotMatch(memoir,/法律案例知识卡/);
 });

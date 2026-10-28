@@ -7,7 +7,7 @@ function toast(message){$('toast').textContent=message;$('toast').hidden=false;c
 async function api(url,method='GET',data){const res=await fetch(url,{method,headers:data && !(data instanceof FormData)?{'content-type':'application/json'}:undefined,body:data?data instanceof FormData?data:JSON.stringify(data):undefined});const value=await res.json();if(!res.ok)throw new Error(value.error||'请求失败');return value;}
 async function guarded(fn){if(busy)return;busy=true;try{await fn();}catch(e){toast(e.message);}finally{busy=false;renderControls();}}
 const asset=(p,page)=>page.image?`/ppt/projects/${p.id}/assets/${page.image}`:'';
-function svgUrl(page,index,image,animate=false){return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(pageSvg(page,index,project.pages.length,image,animate))}`;}
+function svgUrl(page,index,image,animate=false){return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(pageSvg(page,index,project.pages.length,image,animate,project.narrativeMode||'legal-case'))}`;}
 function mark(){dirty=true;$('saved').textContent='有未保存修改';renderPreview();renderControls();}
 function renderControls(){if(!project)return;const locked=generating()||busy;
   ['saveButton','addPage','moveUp','moveDown','deletePage','redraw','pageTitle','pageBody','pagePrompt','pageDuration','pageEntrance','projectStyle','projectTitle','musicSelect','volume'].forEach(id=>$(id).disabled=locked);
@@ -27,7 +27,7 @@ async function embedPreview(){if(!project)return;const id=project.id,idx=selecte
     if(project?.id===id && selected===idx){const img=$('canvas').querySelector('img');if(img)img.src=svgUrl(project.pages[idx],idx,images.get(url),true);}
   }catch(e){toast('预览图片加载失败：'+e.message);}
 }
-function render(){if(!project)return;$('empty').hidden=true;$('workspace').hidden=false;selected=Math.min(selected,Math.max(0,project.pages.length-1));$('projectTitle').value=project.title;$('projectStyle').value=project.styleId||'legacy-blue';
+function render(){if(!project)return;$('empty').hidden=true;$('workspace').hidden=false;selected=Math.min(selected,Math.max(0,project.pages.length-1));$('projectTitle').value=project.title;$('projectMode').textContent=project.narrativeMode==='childhood-memoir'?'童年回忆录':'法律案例解读';$('projectStyle').value=project.styleId||'legacy-blue';
   $('saved').textContent=dirty?'有未保存修改':'已保存到本机';const phase=project.state==='script'||project.state==='drafting'?0:!project.sampleApproved?1:project.state==='done'?3:2;
   document.querySelectorAll('[data-step]').forEach(e=>e.classList.toggle('active',Number(e.dataset.step)===phase));
   const completed=project.pages.filter(p=>p.image).length;$('notice').className=project.error?'error':'';
@@ -45,7 +45,7 @@ function render(){if(!project)return;$('empty').hidden=true;$('workspace').hidde
 function setAudio(){const id=$('musicSelect').value;$('musicPreview').hidden=!id;if(id){const src=`/ppt/music/${id}`;if($('musicPreview').getAttribute('src')!==src)$('musicPreview').src=src;$('musicPreview').volume=Number($('volume').value);}else{$('musicPreview').pause();$('musicPreview').removeAttribute('src');}}
 async function loadMusic(){music=await api('/ppt/music');$('musicSelect').replaceChildren(new Option('无背景音乐',''),...music.map(m=>new Option(m.name,m.id)));if(project)$('musicSelect').value=project.musicId||'';}
 async function openProject(id){if(dirty&&!confirm('当前修改尚未保存，放弃修改并切换任务？'))return;project=await api(`/ppt/projects/${id}`);selected=0;dirty=false;localStorage.setItem('story-ppt',id);render();}
-async function save(){if(!dirty)return;for(const page of project.pages)pageSvg(page,0,project.pages.length);project=await api(`/ppt/projects/${project.id}`,'PUT',{revision:project.revision,title:project.title,styleId:project.styleId,pages:project.pages,musicId:project.musicId,volume:project.volume});dirty=false;render();}
+async function save(){if(!dirty)return;for(const page of project.pages)pageSvg(page,0,project.pages.length,'',false,project.narrativeMode);project=await api(`/ppt/projects/${project.id}`,'PUT',{revision:project.revision,title:project.title,styleId:project.styleId,narrativeMode:project.narrativeMode,pages:project.pages,musicId:project.musicId,volume:project.volume});dirty=false;render();}
 $('saveButton').onclick=()=>guarded(save);
 $('primaryAction').onclick=()=>guarded(async()=>{const action=$('primaryAction').dataset.action;await save();project=await api(`/ppt/projects/${project.id}/action`,'POST',{action,revision:project.revision});render();});
 $('redraw').onclick=()=>guarded(async()=>{if(selected===0 && project.sampleApproved && !confirm('重画样稿会重新确认风格，并更新其他页配图。继续？'))return;await save();project=await api(`/ppt/projects/${project.id}/action`,'POST',{action:'redraw',revision:project.revision,pageId:project.pages[selected].id});render();});
@@ -59,6 +59,7 @@ $('addPage').onclick=()=>{if(project.pages.length>=12)return toast('最多12页'
 $('deletePage').onclick=()=>{if(project.pages.length<=1)return;project.pages.splice(selected,1);mark();render();};
 for(const [id,delta] of [['moveUp',-1],['moveDown',1]])$(id).onclick=()=>{const next=selected+delta;if(next<0||next>=project.pages.length)return;[project.pages[selected],project.pages[next]]=[project.pages[next],project.pages[selected]];selected=next;mark();render();};
 for(const id of ['newButton','startButton'])$(id).onclick=()=>$('newDialog').showModal();$('closeNew').onclick=()=>$('newDialog').close();$('closeHistory').onclick=()=>$('historyDialog').close();
+$('newNarrativeMode').onchange=()=>{const memoir=$('newNarrativeMode').value==='childhood-memoir';$('newSourceLabel').textContent=memoir?'回忆素材':'案例材料';$('newSource').placeholder=memoir?'写下你记得的童年经历、人物、场景和当时的感受。工作台会以“我”的口吻忠实整理。':'粘贴案例经过、争议和已知结论。脚本会按要点整理，不会逐句拆图。';$('newModeHint').textContent=memoir?'以讲述人的第一人称整理经历，不编造事件、对白或感受；生成后先由你确认脚本。':'按问题、经过、争议和结论整理；生成后先由你确认脚本。';};
 $('newForm').onsubmit=e=>{e.preventDefault();guarded(async()=>{if(dirty&&!confirm('当前修改尚未保存，放弃修改并新建？'))return;const form=new FormData(e.target);project=await api('/ppt/projects','POST',Object.fromEntries(form));dirty=false;selected=0;localStorage.setItem('story-ppt',project.id);$('newDialog').close();render();});};
 $('historyButton').onclick=()=>guarded(async()=>{const rows=await api('/ppt/projects');$('historyList').replaceChildren();if(!rows.length)$('historyList').textContent='还没有任务，创建第一条视频吧。';for(const p of rows){const b=document.createElement('button');b.className='history-item';b.textContent=p.title;const small=document.createElement('small');small.textContent=`${labels[p.state]} · ${p.pages.length} 页 · ${new Date(p.createdAt).toLocaleString()}`;b.append(small);b.onclick=()=>guarded(async()=>{await openProject(p.id);$('historyDialog').close();});$('historyList').append(b);}$('historyDialog').showModal();});
 $('showVideo').onclick=()=>{$('video').hidden=!$('video').hidden;if(!$('video').hidden)$('video').play().catch(()=>{});};
