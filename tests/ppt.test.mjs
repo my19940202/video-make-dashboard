@@ -14,7 +14,9 @@ const {create,save,read,update,projectDir}=await import(pathToFileURL(join(temp,
 const {pageSvg}=await import(pathToFileURL(resolve('public/workbench/layout.mjs')));
 const page=(title)=>({id:randomUUID(),title,body:'这是一个案例要点。',prompt:'律师阅读合同',duration:10,imageVersion:1,status:'done',image:'old.png'});
 function ready(){const p=create('合同案例','案例材料');p.pages=[page('第一张'),page('第二张')];p.scriptApproved=true;p.sampleApproved=true;p.state='done';p.final='final.mp4';return save(p);}
-const edit=p=>({revision:p.revision,title:p.title,pages:p.pages,musicId:p.musicId,volume:p.volume});
+const edit=p=>({revision:p.revision,title:p.title,styleId:p.styleId,pages:p.pages,musicId:p.musicId,volume:p.volume});
+test('新项目默认彩铅，旧项目沿用蓝白插画',()=>{const fresh=create('新项目','案例材料');assert.equal(fresh.styleId,'colored-pencil-diary');const old=ready();delete old.styleId;save(old);const loaded=read(old.id);assert.equal(loaded.styleId,'legacy-blue');assert.equal(loaded.pages[0].image,'old.png');});
+test('切换项目样式使所有图片失效并重新进入样稿审核',()=>{const p=ready(),data=edit(p);data.styleId='ink-wash';const next=update(p.id,data);assert.equal(next.styleId,'ink-wash');assert.equal(next.sampleApproved,false);assert.equal(next.state,'script');assert.equal(next.final,undefined);assert.ok(next.pages.every(page=>!page.image && page.status==='idle' && page.imageVersion===2));});
 test('文字和音乐修改保留图片，仅使成片失效',()=>{const p=ready(),data=edit(p);data.pages[1].body='修改后的正文';data.volume=.4;const next=update(p.id,data);assert.equal(next.pages[1].image,'old.png');assert.equal(next.final,undefined);assert.equal(next.revision,p.revision+1);});
 test('修改逐页动效保留图片，仅使成片失效',()=>{const p=ready(),data=edit(p);data.pages[1].entrance='blur';const next=update(p.id,data);assert.equal(next.pages[1].image,'old.png');assert.equal(next.pages[1].entrance,'blur');assert.equal(next.final,undefined);});
 test('旧项目的页面动效默认为淡入',()=>{const p=ready(),data=edit(p);data.pages.forEach(page=>delete page.entrance);const next=update(p.id,data);assert.equal(next.pages[0].entrance,'fade');});

@@ -8,6 +8,7 @@ import { runCommand } from '../lib/process';
 import { approve } from './engine';
 import { create, list, read, update, projectDir, musicDir, musicFile, musicList } from './store';
 import { launch, recover } from './workflow';
+import { styleIdSchema } from './styles';
 
 function errorMessage(error:unknown) {return error instanceof Error?error.message:String(error);}
 function fileResponse(file:string,type:string,range?:string):Response {
@@ -33,8 +34,8 @@ export const pptRoutes=[
   }}),
   registerApiRoute('/ppt/projects',{method:'GET',requiresAuth:false,handler:async c=>{recover();return c.json(list());}}),
   registerApiRoute('/ppt/projects',{method:'POST',requiresAuth:false,handler:async c=>{
-    try {checkOrigin(c); const body=z.object({title:z.string().trim().min(1).max(60),source:z.string().trim().min(10).max(20000)}).parse(await c.req.json());
-      const p=create(body.title,body.source);launch(p.id);return c.json(p,201);
+    try {checkOrigin(c); const body=z.object({title:z.string().trim().min(1).max(60),source:z.string().trim().min(10).max(20000),styleId:styleIdSchema.default('colored-pencil-diary')}).parse(await c.req.json());
+      const p=create(body.title,body.source,body.styleId);launch(p.id);return c.json(p,201);
     }catch(e){return c.json({error:errorMessage(e)},400);}
   }}),
   registerApiRoute('/ppt/projects/:id',{method:'GET',requiresAuth:false,handler:async c=>{

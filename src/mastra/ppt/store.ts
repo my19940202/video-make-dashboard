@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { appRoot } from '../lib/config';
+import { styleIdSchema, type StyleId } from './styles';
 
 export const root = resolve(appRoot, 'data/ppt');
 export const pageSchema = z.object({
@@ -13,6 +14,7 @@ export const pageSchema = z.object({
 });
 export const editSchema = z.object({
   revision: z.number().int(), title: z.string().trim().min(1).max(60),
+  styleId: styleIdSchema,
   pages: z.array(pageSchema).min(1).max(12),
   musicId: z.string().uuid().nullable(), volume: z.number().min(0).max(1),
 });
@@ -22,7 +24,7 @@ export type Page = z.infer<typeof pageSchema> & {
   generationMs?: number;
 };
 export type Project = {
-  id: string; title: string; source: string; pages: Page[]; revision: number;
+  id: string; title: string; source: string; styleId: StyleId; pages: Page[]; revision: number;
   state: 'drafting'|'script'|'sample-generating'|'sample'|'producing'|'rendering'|'done'|'failed';
   phase: 'draft'|'sample'|'produce'; scriptApproved: boolean; sampleApproved: boolean;
   musicId: string|null; volume: number; error?: string; final?: string; silent?: string;
@@ -41,6 +43,7 @@ export function save(project: Project): Project {
 }
 export function read(id: string): Project {
   const project=JSON.parse(readFileSync(resolve(projectDir(id), 'project.json'), 'utf8')) as Project;
+  project.styleId ||= 'legacy-blue';
   for(const page of project.pages) {
     const legacy=page as Page & {jobId?:string;queueMs?:number};
     delete legacy.jobId; delete legacy.queueMs;
@@ -53,8 +56,8 @@ export function list(): Project[] {
   return readdirSync(root).filter(id => z.string().uuid().safeParse(id).success)
     .flatMap(id => { try { return [read(id)]; } catch { return []; } }).sort((a,b) => b.updatedAt-a.updatedAt);
 }
-export function create(title: string, source: string): Project {
-  return save({id: randomUUID(), title, source, pages: [], revision: 1, state: 'drafting', phase:'draft',
+export function create(title: string, source: string, styleId: StyleId = 'colored-pencil-diary'): Project {
+  return save({id: randomUUID(), title, source, styleId, pages: [], revision: 1, state: 'drafting', phase:'draft',
     scriptApproved:false, sampleApproved:false, musicId:null, volume:0.18, createdAt:Date.now(), updatedAt:Date.now()});
 }
 export function update(id: string, input: unknown): Project {
@@ -62,18 +65,19 @@ export function update(id: string, input: unknown): Project {
   if (project.revision !== value.revision) throw new Error('内容已有更新，请刷新后重试');
   if (!['script','sample','done','failed'].includes(project.state)) throw new Error('制作中暂不可编辑，请等待当前步骤完成');
   if (new Set(value.pages.map(p=>p.id)).size !== value.pages.length) throw new Error('页面 ID 重复');
+  const styleChanged=project.styleId!==value.styleId;
   const previous = new Map(project.pages.map(p=>[p.id,p]));
   const first = project.pages[0];
   project.pages = value.pages.map(p => {
     const old = previous.get(p.id);
-    return old && old.prompt === p.prompt ? {...old, ...p} : {...p, imageVersion:(old?.imageVersion || 0)+1, status:'idle'};
+    return old && old.prompt === p.prompt && !styleChanged ? {...old, ...p} : {...p, imageVersion:(old?.imageVersion || 0)+1, image:undefined, error:undefined, generationMs:undefined, status:'idle'};
   });
-  const changedSample = first && (first.id !== project.pages[0]?.id || first.prompt !== project.pages[0]?.prompt);
+  const changedSample = styleChanged || (first && (first.id !== project.pages[0]?.id || first.prompt !== project.pages[0]?.prompt));
   if (changedSample) {
     project.sampleApproved = false;
-    for (const page of project.pages.slice(1)) { page.imageVersion++; delete page.image; page.status='idle'; }
+    if(!styleChanged) for (const page of project.pages.slice(1)) { page.imageVersion++; delete page.image; page.status='idle'; }
   }
-  Object.assign(project, {title:value.title, musicId:value.musicId, volume:value.volume});
+  Object.assign(project, {title:value.title, styleId:value.styleId, musicId:value.musicId, volume:value.volume});
   project.revision++; delete project.final; delete project.error;
   if (project.scriptApproved) project.state = project.sampleApproved ? 'done' : (project.pages[0]?.image ? 'sample' : 'script');
   else project.state='script';
