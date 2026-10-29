@@ -5,24 +5,82 @@ import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { appRoot, rendererRoot } from '../lib/config';
 import { runCommand } from '../lib/process';
-import { pageSchema, projectDir, read, save, musicFile, type Project, type Page } from './store';
+import { pageSchema, projectDir, read, save, musicFile, type Project, type Page, type ReferenceAsset } from './store';
 import { generateImage } from './draw-things';
+import { generateCodexImage, type ImageReference } from './codex-image';
+import { imageSettings } from './settings';
 import { imagePrompt } from './styles';
 import { planningPrompt } from './narratives';
 
-const generatedSchema = z.object({pages:z.array(pageSchema.omit({id:true})).min(6).max(8)});
+const generatedPage = pageSchema.omit({id:true,characterIds:true,locationId:true}).extend({
+  characterKeys:z.array(z.string()).default([]), locationKey:z.string().nullable().default(null),
+});
+const generatedSchema = z.object({
+  pages:z.array(generatedPage).min(6).max(8),
+  characters:z.array(z.object({key:z.string(),name:z.string(),description:z.string()})).max(3).default([]),
+  locations:z.array(z.object({key:z.string(),name:z.string(),description:z.string()})).max(2).default([]),
+});
 const agent = new Agent({id:'ppt-planner', name:'视频分页', model:'deepseek/deepseek-flash',
   instructions:'根据调用方指定的口吻整理用户材料，遵守事实边界和输出结构。不要把一种口吻的结构套用到另一种口吻。'});
 function current(id: string, revision: number) { const p=read(id); if(p.revision!==revision) throw new Error('版本已变更，停止旧任务'); return p; }
 function mutatePage(id:string, revision:number, pageId:string, fields:Partial<Page>) {
   const p=current(id,revision); const page=p.pages.find(x=>x.id===pageId); if(!page) throw new Error('页面已移除'); Object.assign(page,fields); save(p);
 }
+function mutateReference(id:string, revision:number, referenceId:string, fields:Partial<ReferenceAsset>) {
+  const p=current(id,revision); const ref=p.references?.find(x=>x.id===referenceId); if(!ref) throw new Error('参考图已移除');
+  Object.assign(ref,fields); save(p);
+}
+function imageSize(p:Project) {
+  return p.layoutTemplate==='title-full-image' ? {width:576,height:768} :
+    {width:p.styleId==='legacy-blue'?768:960,height:p.styleId==='legacy-blue'?768:960};
+}
+function styleReference(p:Project): ImageReference[] {
+  if(p.styleId==='legacy-blue') return [];
+  const file=resolve(appRoot,'assets/style-references',...(p.layoutTemplate==='title-full-image'?['portrait']:[]),`${p.styleId}.png`);
+  return [{bytes:readFileSync(file)}];
+}
+function pageReferences(p:Project,page:Page):ImageReference[] {
+  const refs=p.referencesApproved ? p.references||[] : [];
+  const selected=[...(page.characterIds||[]),...(page.locationId?[page.locationId]:[])];
+  const result:ImageReference[]=selected.flatMap(id=>{
+    const ref=refs.find(item=>item.id===id);
+    return ref?.image ? [{bytes:readFileSync(resolve(projectDir(p.id),ref.image)),jobId:ref.provider==='codex'?ref.codexJobId:undefined}] : [];
+  });
+  return [...result,...styleReference(p)].slice(0,3);
+}
+function referencePrompt(p:Project,ref:ReferenceAsset):string {
+  const content=ref.kind==='character'
+    ? `同一位角色的三视图设定图：${ref.name}，${ref.description}。白底，左中右分别是正面、侧面、背面全身像，年龄、脸型、发型、服饰保持一致。`
+    : `不含人物的地点设定图：${ref.name}，${ref.description}。画出可在不同页面重复使用的环境特征，不添加故事中未出现的物品。`;
+  return imagePrompt(p.styleId,content,p.narrativeMode);
+}
+async function imageReference(id:string,revision:number,referenceId:string):Promise<void> {
+  const p=current(id,revision); const ref=p.references?.find(x=>x.id===referenceId);
+  if(!ref) throw new Error('参考图不存在');
+  if(ref.image && existsSync(resolve(projectDir(id),ref.image))) return;
+  if(imageSettings().provider!=='codex' && !ref.codexJobId) throw new Error('Draw Things 的参考拼板尚未通过验证；请切换到 Codex 生图后重试');
+  try {
+    mutateReference(id,revision,referenceId,{status:'running',provider:'codex'});
+    const result=await generateCodexImage({prompt:referencePrompt(p,ref),width:960,height:960,
+      references:styleReference({...p,layoutTemplate:'text-illustration'}),key:`story-ppt:${id}:ref:${ref.id}:${ref.imageVersion}`,
+      existingJobId:ref.codexJobId,onJob:jobId=>mutateReference(id,revision,referenceId,{codexJobId:jobId})});
+    current(id,revision);
+    const file=`reference-${ref.id}-${ref.imageVersion}.png`; writeFileSync(resolve(projectDir(id),file),result.bytes);
+    mutateReference(id,revision,referenceId,{image:file,status:'done',generationMs:result.durationMs,codexJobId:result.jobId,error:undefined});
+  } catch(error) { mutateReference(id,revision,referenceId,{status:'failed',error:error instanceof Error?error.message:String(error)}); throw error; }
+}
 export async function imagePage(id:string, revision:number, pageId:string):Promise<void> {
   const p=current(id,revision); const page=p.pages.find(x=>x.id===pageId)!;
   if(page.image && existsSync(resolve(projectDir(id),page.image))) return;
   try {
-    mutatePage(id,revision,pageId,{status:'running'});
-    const {bytes,durationMs}=await generateImage(imagePrompt(p.styleId,page.prompt,p.narrativeMode),p.styleId,p.layoutTemplate);
+    const provider=page.codexJobId?'codex':imageSettings().provider;
+    mutatePage(id,revision,pageId,{status:'running',provider});
+    const prompt=imagePrompt(p.styleId,page.prompt,p.narrativeMode);
+    const {bytes,durationMs}=provider==='codex'
+      ? await generateCodexImage({prompt,width:imageSize(p).width,height:imageSize(p).height,
+        references:pageReferences(p,page),key:`story-ppt:${id}:page:${page.id}:${page.imageVersion}`,
+        existingJobId:page.codexJobId,onJob:jobId=>mutatePage(id,revision,pageId,{codexJobId:jobId})})
+      : await generateImage(prompt,p.styleId,p.layoutTemplate);
     current(id,revision);
     const file=`${pageId}-${page.imageVersion}.png`; writeFileSync(resolve(projectDir(id),file),bytes);
     mutatePage(id,revision,pageId,{image:file,status:'done',generationMs:durationMs,error:undefined}); return;
@@ -33,13 +91,29 @@ export async function executePhase(id:string):Promise<void> {
   p.phaseStartedAt=Date.now(); delete p.error; save(p);
   try {
     if(p.phase==='draft') {
-      const response=await agent.generate(planningPrompt(p.narrativeMode,p.title,p.source),{structuredOutput:{schema:generatedSchema}});
+      const referenceInstructions='\n同时提取视频中重复出现的人物（最多3位）和关键地点（最多2处），给每项稳定的 key、名称和可画的外观描述；法律稿件如需重复出现的人物可用匿名通用人物，不暗示其真实身份。每页用 characterKeys 和 locationKey 关联确实出现的人物与地点；不得凭空补充案情或回忆。';
+      const response=await agent.generate(planningPrompt(p.narrativeMode,p.title,p.source)+referenceInstructions,{structuredOutput:{schema:generatedSchema}});
       const generated=generatedSchema.parse(response.object);
       p=current(id,revision);
       const raw=generated.pages.map(page=>Math.max(7,Math.min(15,Math.ceil(page.body.length/5))));
       const total=raw.reduce((a,b)=>a+b,0); const target=Math.max(60,Math.min(90,total));
-      p.pages=generated.pages.map((page,i)=>({...page,id:randomUUID(),duration:Math.round(raw[i]*target/total*10)/10,imageVersion:1,status:'idle'}));
+      const characters=new Map<string,string>(), locations=new Map<string,string>();
+      p.references=[...generated.characters.map(item=>{const id=randomUUID();characters.set(item.key,id);return {id,kind:'character' as const,name:item.name.slice(0,40),description:item.description.slice(0,500),imageVersion:1,status:'idle' as const};}),
+        ...generated.locations.map(item=>{const id=randomUUID();locations.set(item.key,id);return {id,kind:'location' as const,name:item.name.slice(0,40),description:item.description.slice(0,500),imageVersion:1,status:'idle' as const};})];
+      p.pages=generated.pages.map((page,i)=>{
+        const {characterKeys,locationKey,...content}=page;
+        return {...content,id:randomUUID(),characterIds:[...new Set(characterKeys.map(key=>characters.get(key)).filter((id):id is string=>!!id))],
+          locationId:locationKey?locations.get(locationKey)||null:null,
+          duration:Math.round(raw[i]*target/total*10)/10,imageVersion:1,status:'idle'};
+      });
       p.state='script'; save(p); return;
+    }
+    if(p.phase==='references') {
+      const results:PromiseSettledResult<void>[]=[];
+      for(const ref of p.references||[]) results.push((await Promise.allSettled([imageReference(id,revision,ref.id)]))[0]);
+      const failures=results.filter(result=>result.status==='rejected');
+      if(failures.length) throw new Error(`${failures.length} 张参考图生成失败；已完成的图片保留，请单张重试`);
+      p=current(id,revision); p.state='references'; save(p); return;
     }
     if(p.phase==='sample') {
       await imagePage(id,revision,p.pages[0].id); p=current(id,revision); p.state='sample'; save(p); return;
@@ -59,14 +133,37 @@ export async function executePhase(id:string):Promise<void> {
     p.state='failed'; p.error=error instanceof Error?error.message:String(error); save(p); throw error;
   }
 }
-export function approve(id:string, action:string, revision:number, pageId?:string):Project {
+export function approve(id:string, action:string, revision:number, pageId?:string, referenceId?:string):Project {
   const p=read(id); if(p.revision!==revision) throw new Error('内容已有更新，请刷新后重试');
-  if(['drafting','sample-generating','producing','rendering'].includes(p.state)) return p;
+  if(['drafting','references-generating','sample-generating','producing','rendering'].includes(p.state)) return p;
   if(action==='script') {
     if(p.state!=='script') throw new Error('当前不在脚本确认阶段');
     const total=p.pages.reduce((n,s)=>n+s.duration,0);
     if(total<60 || total>90.5) throw new Error('总时长须为60–90秒，请调整页面时长');
-    p.scriptApproved=true; p.phase='sample'; p.state='sample-generating';
+    p.scriptApproved=true;
+    p.referenceWorkflowEnabled=!!(p.referenceWorkflowVersion && p.references?.length && imageSettings().provider==='codex');
+    if(p.referenceWorkflowEnabled) {
+      p.referencesApproved=false; p.phase='references'; p.state='references-generating';
+    } else { p.referencesApproved=true; p.phase='sample'; p.state='sample-generating'; }
+  } else if(action==='references') {
+    if(p.state!=='references' || p.references?.some(r=>!r.image || r.status!=='done')) throw new Error('请先完成全部参考图');
+    p.referencesApproved=true;
+    p.phase=p.sampleApproved?'produce':'sample'; p.state=p.sampleApproved?'producing':'sample-generating';
+  } else if(action==='generate-references') {
+    if(p.state!=='references' || !p.referenceWorkflowEnabled) throw new Error('当前不在参考图审核阶段');
+    if(imageSettings().provider!=='codex') throw new Error('请切换到 Codex 生图后生成参考图');
+    p.phase='references'; p.state='references-generating';
+  } else if(action==='redraw-reference') {
+    const ref=p.references?.find(r=>r.id===referenceId); if(!ref) throw new Error('参考图不存在');
+    if(!p.scriptApproved) throw new Error('请先确认脚本');
+    if(imageSettings().provider!=='codex') throw new Error('Draw Things 的参考拼板尚未通过验证；请切换到 Codex 生图');
+    ref.imageVersion++; delete ref.image; delete ref.error; delete ref.codexJobId; ref.status='idle';
+    p.referencesApproved=false;
+    for(const page of p.pages) if((page.characterIds||[]).includes(ref.id) || page.locationId===ref.id) {
+      page.imageVersion++; delete page.image; delete page.codexJobId; page.status='idle';
+      if(page===p.pages[0]) p.sampleApproved=false;
+    }
+    p.phase='references'; p.state='references-generating';
   } else if(action==='sample') {
     if(p.state!=='sample' || !p.pages[0]?.image) throw new Error('样稿尚未就绪');
     p.sampleApproved=true; p.phase='produce'; p.state='producing';
@@ -74,21 +171,25 @@ export function approve(id:string, action:string, revision:number, pageId?:strin
     const page=p.pages.find(s=>s.id===pageId); if(!page) throw new Error('页面不存在');
     if(!p.scriptApproved) throw new Error('请先确认脚本');
     const affected=page===p.pages[0] ? p.pages : [page];
-    for(const item of affected) { item.imageVersion++; delete item.image; delete item.error; item.status='idle'; }
+    for(const item of affected) { item.imageVersion++; delete item.image; delete item.codexJobId; delete item.error; item.status='idle'; }
     if(page===p.pages[0]) p.sampleApproved=false;
     p.phase=p.sampleApproved?'produce':'sample'; p.state=p.sampleApproved?'producing':'sample-generating';
   } else if(action==='retry' || action==='render') {
     if(action==='render' && !p.sampleApproved) throw new Error('请先确认样稿');
     for(const page of p.pages) if(page.status==='failed') {
-      delete page.error; page.status='idle';
+      page.imageVersion++; delete page.codexJobId; delete page.error; page.status='idle';
+    }
+    for(const ref of p.references||[]) if(ref.status==='failed') {
+      delete ref.error; ref.status='idle';
     }
     p.phase=action==='render'?'produce':p.phase;
-    p.state=p.phase==='draft'?'drafting':p.phase==='sample'?'sample-generating':'producing';
+    p.state=p.phase==='draft'?'drafting':p.phase==='references'?'references-generating':p.phase==='sample'?'sample-generating':'producing';
   } else throw new Error('未知操作');
   p.revision++; delete p.final; delete p.error; return save(p);
 }
 export async function reconcileFailed(id:string) {
   const p=read(id);
   for(const page of p.pages) if(!page.image && page.status==='running') page.status='idle';
+  for(const ref of p.references||[]) if(!ref.image && ref.status==='running') ref.status='idle';
   save(p);
 }

@@ -10,6 +10,7 @@ import { create, list, read, update, projectDir, musicDir, musicFile, musicList,
 import { launch, recover } from './workflow';
 import { styleIdSchema } from './styles';
 import { narrativeModeSchema } from './narratives';
+import { imageSettings, setImageSettings } from './settings';
 
 function errorMessage(error:unknown) {return error instanceof Error?error.message:String(error);}
 function fileResponse(file:string,type:string,range?:string):Response {
@@ -28,6 +29,10 @@ function fileResponse(file:string,type:string,range?:string):Response {
 // Local mutations require same-origin requests; cross-origin browser forms cannot start jobs.
 function checkOrigin(c:any) {const origin=c.req.header('origin'); if(origin && origin!==new URL(c.req.url).origin) throw new Error('不允许跨站请求');}
 export const pptRoutes=[
+  registerApiRoute('/ppt/settings',{method:'GET',requiresAuth:false,handler:async c=>c.json(imageSettings())}),
+  registerApiRoute('/ppt/settings',{method:'PUT',requiresAuth:false,handler:async c=>{
+    try {checkOrigin(c);return c.json(setImageSettings(await c.req.json()));} catch(e) {return c.json({error:errorMessage(e)},400);}
+  }}),
   registerApiRoute('/workbench',{method:'GET',requiresAuth:false,handler:async()=>fileResponse(resolve(appRoot,'public/workbench/index.html'),'text/html; charset=utf-8')}),
   registerApiRoute('/workbench/:file',{method:'GET',requiresAuth:false,handler:async c=>{
     const name=c.req.param('file'); if(!['app.js','style.css','layout.mjs'].includes(name)) return c.text('Not found',404);
@@ -46,13 +51,13 @@ export const pptRoutes=[
     try{checkOrigin(c);const body=await c.req.json();musicFile(body.musicId);return c.json(update(c.req.param('id'),body));}catch(e){return c.json({error:errorMessage(e)},409);}
   }}),
   registerApiRoute('/ppt/projects/:id/action',{method:'POST',requiresAuth:false,handler:async c=>{
-    try{checkOrigin(c);const body=z.object({action:z.enum(['script','sample','retry','render','redraw']),revision:z.number().int(),pageId:z.string().uuid().optional()}).parse(await c.req.json());
-      const p=approve(c.req.param('id'),body.action,body.revision,body.pageId);launch(p.id);return c.json(p);
+    try{checkOrigin(c);const body=z.object({action:z.enum(['script','references','generate-references','redraw-reference','sample','retry','render','redraw']),revision:z.number().int(),pageId:z.string().uuid().optional(),referenceId:z.string().uuid().optional()}).parse(await c.req.json());
+      const p=approve(c.req.param('id'),body.action,body.revision,body.pageId,body.referenceId);launch(p.id);return c.json(p);
     }catch(e){return c.json({error:errorMessage(e)},409);}
   }}),
   registerApiRoute('/ppt/projects/:id/assets/:file',{method:'GET',requiresAuth:false,handler:async c=>{
     try{const {id,file}=c.req.param();const p=read(id);
-      if(![...p.pages.map(page=>page.image),p.final].includes(file)) return c.text('Not found',404);
+      if(![...p.pages.map(page=>page.image),...(p.references||[]).map(ref=>ref.image),p.final].includes(file)) return c.text('Not found',404);
       return fileResponse(resolve(projectDir(id),file),file.endsWith('.png')?'image/png':'video/mp4',c.req.header('range'));
     }catch(e){return c.json({error:errorMessage(e)},404);}
   }}),

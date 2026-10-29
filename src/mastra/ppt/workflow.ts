@@ -11,7 +11,7 @@ export const pptWorkflow=createWorkflow({id:'ppt-video-workflow',inputSchema:sch
 const active=new Set<string>();
 export function launch(id:string) {
   if(active.has(id)) return;
-  const p=read(id); if(!['drafting','sample-generating','producing','rendering'].includes(p.state)) return;
+  const p=read(id); if(!['drafting','references-generating','sample-generating','producing','rendering'].includes(p.state)) return;
   active.add(id);
   void (async()=>{
     try { const run=await pptWorkflow.createRun(); const result=await run.start({inputData:{id}});
