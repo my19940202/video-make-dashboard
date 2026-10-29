@@ -10,6 +10,7 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
  const props=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  const {pageSvg}=await import(pathToFileURL(path.resolve(__dirname,'../public/workbench/layout.mjs')));
  const pageLabel=props.narrativeMode==='childhood-memoir'?'童年手记':'案例笔记';
+ const fullImage=props.layoutTemplate==='title-full-image';
  const cache=path.join(props.projectDir,'cache');fs.mkdirSync(cache,{recursive:true});
  const font=process.env.PPT_FONT || '/System/Library/Fonts/STHeiti Light.ttc';
  if(!fs.existsSync(font))throw new Error(`缺少中文字体：${font}。请设置 PPT_FONT 指向支持中文的字体文件。`);
@@ -17,8 +18,8 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
  for(let i=0;i<props.pages.length;i++){
   const page=props.pages[i];const imagePath=path.resolve(props.projectDir,page.image);
   if(!fs.existsSync(imagePath))throw new Error(`缺少第${i+1}页配图：${imagePath}`);
-  const image=fs.readFileSync(imagePath).toString('base64');const svg=pageSvg(page,i,props.pages.length,`data:image/png;base64,${image}`,false,props.narrativeMode,props.hideHeaderFooter);
-  const pageHash=hash(svg+':layout-v3');const png=path.join(cache,pageHash+'.png');
+  const image=fs.readFileSync(imagePath).toString('base64');const svg=pageSvg(page,i,props.pages.length,`data:image/png;base64,${image}`,false,props.narrativeMode,props.hideHeaderFooter,props.layoutTemplate);
+  const pageHash=hash(svg+':layout-v4');const png=path.join(cache,pageHash+'.png');
   if(!fs.existsSync(png)){
    const textRoot=path.join(cache,pageHash);const titlePath=textRoot+'-title.txt',bodyPath=textRoot+'-body.txt';
    const title=wrap(page.title,13),body=wrap(page.body,21);
@@ -27,15 +28,19 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
    const draw=(textfile,size,y,colour,spacing)=>`drawtext=fontfile=${font.replace(/ /g,'\\ ')}:textfile=${textfile}:fontcolor=${colour}:fontsize=${size}:line_spacing=${spacing}:x=88:y=${y}:expansion=none`;
    const header=props.hideHeaderFooter?'':`drawbox=x=88:y=96:w=8:h=32:color=0x355cce:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${pageLabel}':fontcolor=0x546783:fontsize=25:x=116:y=96:expansion=none,`;
    const footer=props.hideHeaderFooter?'':`,drawbox=x=88:y=1810:w=904:h=1:color=0xd4deeb:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${String(i+1).padStart(2,'0')} / ${String(props.pages.length).padStart(2,'0')}':fontcolor=0x72829a:fontsize=24:x=88:y=1840:expansion=none,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${page.duration} 秒':fontcolor=0x72829a:fontsize=24:x=920:y=1840:expansion=none`;
-   const layout=`[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath,64,205,'0x172a46',18)},${draw(bodyPath,42,1465,'0x263b57',15)}${footer}[v]`;
+   const layout=fullImage
+    ? `[1:v]scale=1080:1440:force_original_aspect_ratio=increase,crop=1080:1440[art];[0:v][art]overlay=0:480,${draw(titlePath,64,205,'0x172a46',18)}[v]`
+    : `[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath,64,205,'0x172a46',18)},${draw(bodyPath,42,1465,'0x263b57',15)}${footer}[v]`;
    try{cmd('ffmpeg',['-y','-v','error','-f','lavfi','-i','color=c=0xf6f8fc:s=1080x1920:r=1:d=1','-i',imagePath,'-filter_complex',layout,'-map','[v]','-frames:v','1',png]);}
    catch(error){throw new Error(`第${i+1}页排版失败：${error.message}`);}
   }
   const entrance=['fade','blur','float'].includes(page.entrance)?page.entrance:'fade';
-  const clip=path.join(cache,hash(pageHash+':'+page.duration+':'+entrance+':motion-v4')+'.mp4');
+  const clip=path.join(cache,hash(pageHash+':'+page.duration+':'+entrance+':motion-v5')+'.mp4');
   if(!fs.existsSync(clip)){
-   const regions=[['title',80,390,.12],['art',480,952,.42],['body',1460,330,.72]];
-   const parts=[entrance==='blur'?'[0:v]split=7[base][title][art][body][titleblur][artblur][bodyblur]':'[0:v]split=4[base][title][art][body]','[base]drawbox=x=0:y=80:w=1080:h=390:color=0xf6f8fc:t=fill,drawbox=x=0:y=480:w=1080:h=952:color=0xf6f8fc:t=fill,drawbox=x=0:y=1460:w=1080:h=330:color=0xf6f8fc:t=fill[b0]'];
+   const regions=fullImage?[['title',80,390,.12],['art',480,1440,.42]]:[['title',80,390,.12],['art',480,952,.42],['body',1460,330,.72]];
+   const names=regions.map(region=>region[0]);
+   const splitNames=['base',...names,...(entrance==='blur'?names.map(name=>`${name}blur`):[])];
+   const parts=[`[0:v]split=${splitNames.length}${splitNames.map(name=>`[${name}]`).join('')}`,`[base]drawbox=x=0:y=80:w=1080:h=390:color=0xf6f8fc:t=fill,drawbox=x=0:y=480:w=1080:h=${fullImage?1440:952}:color=0xf6f8fc:t=fill${fullImage?'':',drawbox=x=0:y=1460:w=1080:h=330:color=0xf6f8fc:t=fill'}[b0]`];
    let last='b0';
    for(let n=0;n<regions.length;n++){
     const [name,y,h,delay]=regions[n],next=`b${n+1}`;
