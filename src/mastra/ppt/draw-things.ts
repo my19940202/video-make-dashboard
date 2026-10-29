@@ -1,9 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { appRoot } from '../lib/config';
+import type { StyleId } from './styles';
+
 const apiBase = () => (process.env.DRAW_THINGS_URL || 'http://127.0.0.1:7860').replace(/\/$/, '');
-export async function generateImage(prompt: string): Promise<{bytes: Buffer; durationMs: number}> {
+export async function generateImage(prompt: string, styleId: StyleId = 'legacy-blue'): Promise<{bytes: Buffer; durationMs: number}> {
   const started=Date.now();
+  const referenced=styleId!=='legacy-blue';
+  const image=referenced?readFileSync(resolve(appRoot,'assets/style-references',`${styleId}.png`)).toString('base64'):undefined;
+  const payload=referenced
+    ? {prompt,init_images:[image],width:960,height:960,strength:0.96,steps:10}
+    : {model:'z_image_turbo_1.0_q8p.ckpt',prompt,negative_prompt:'',width:768,height:768,steps:8,guidance_scale:1,sampler:'UniPC Trailing',shift:3,seed:-1};
   let response: Response;
-  try { response=await fetch(`${apiBase()}/sdapi/v1/txt2img`,{method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({model:'z_image_turbo_1.0_q8p.ckpt',prompt,negative_prompt:'',width:768,height:768,steps:8,guidance_scale:1,sampler:'UniPC Trailing',shift:3,seed:-1}),signal:AbortSignal.timeout(300_000)}); }
+  try { response=await fetch(`${apiBase()}/sdapi/v1/${referenced?'img2img':'txt2img'}`,{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify(payload),signal:AbortSignal.timeout(referenced?600_000:300_000)}); }
   catch(error) { throw new Error(`无法连接 Draw Things：${error instanceof Error?error.message:String(error)}`); }
   if(!response.ok) throw new Error(`Draw Things ${response.status}：${(await response.text()).slice(0,250)}`);
   const data=await response.json() as {images?:unknown[]};

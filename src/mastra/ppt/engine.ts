@@ -22,7 +22,7 @@ export async function imagePage(id:string, revision:number, pageId:string):Promi
   if(page.image && existsSync(resolve(projectDir(id),page.image))) return;
   try {
     mutatePage(id,revision,pageId,{status:'running'});
-    const {bytes,durationMs}=await generateImage(imagePrompt(p.styleId,page.prompt,p.narrativeMode));
+    const {bytes,durationMs}=await generateImage(imagePrompt(p.styleId,page.prompt,p.narrativeMode),p.styleId);
     current(id,revision);
     const file=`${pageId}-${page.imageVersion}.png`; writeFileSync(resolve(projectDir(id),file),bytes);
     mutatePage(id,revision,pageId,{image:file,status:'done',generationMs:durationMs,error:undefined}); return;

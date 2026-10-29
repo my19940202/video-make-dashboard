@@ -9,7 +9,7 @@ import { narrativeModeSchema, type NarrativeMode } from './narratives';
 export const root = resolve(appRoot, 'data/ppt');
 export const pageSchema = z.object({
   id: z.string().uuid(), title: z.string().trim().min(1).max(32),
-  body: z.string().trim().min(1).max(180), prompt: z.string().trim().min(1).max(2500),
+  body: z.string().trim().min(1).max(105), prompt: z.string().trim().min(1).max(2500),
   duration: z.number().min(4).max(30),
   entrance: z.enum(['fade','blur','float']).default('fade'),
 });
@@ -17,6 +17,7 @@ export const editSchema = z.object({
   revision: z.number().int(), title: z.string().trim().min(1).max(60),
   styleId: styleIdSchema,
   narrativeMode: narrativeModeSchema,
+  hideHeaderFooter: z.boolean().default(false),
   pages: z.array(pageSchema).min(1).max(12),
   musicId: z.string().uuid().nullable(), volume: z.number().min(0).max(1),
 });
@@ -26,7 +27,7 @@ export type Page = z.infer<typeof pageSchema> & {
   generationMs?: number;
 };
 export type Project = {
-  id: string; title: string; source: string; styleId: StyleId; narrativeMode: NarrativeMode; pages: Page[]; revision: number;
+  id: string; title: string; source: string; styleId: StyleId; narrativeMode: NarrativeMode; hideHeaderFooter: boolean; pages: Page[]; revision: number;
   state: 'drafting'|'script'|'sample-generating'|'sample'|'producing'|'rendering'|'done'|'failed';
   phase: 'draft'|'sample'|'produce'; scriptApproved: boolean; sampleApproved: boolean;
   musicId: string|null; volume: number; error?: string; final?: string; silent?: string;
@@ -47,6 +48,7 @@ export function read(id: string): Project {
   const project=JSON.parse(readFileSync(resolve(projectDir(id), 'project.json'), 'utf8')) as Project;
   project.styleId ||= 'legacy-blue';
   project.narrativeMode ||= 'legal-case';
+  project.hideHeaderFooter ??= false;
   for(const page of project.pages) {
     const legacy=page as Page & {jobId?:string;queueMs?:number};
     delete legacy.jobId; delete legacy.queueMs;
@@ -60,7 +62,7 @@ export function list(): Project[] {
     .flatMap(id => { try { return [read(id)]; } catch { return []; } }).sort((a,b) => b.updatedAt-a.updatedAt);
 }
 export function create(title: string, source: string, styleId: StyleId = 'colored-pencil-diary', narrativeMode: NarrativeMode = 'legal-case'): Project {
-  return save({id: randomUUID(), title, source, styleId, narrativeMode, pages: [], revision: 1, state: 'drafting', phase:'draft',
+  return save({id: randomUUID(), title, source, styleId, narrativeMode, hideHeaderFooter:false, pages: [], revision: 1, state: 'drafting', phase:'draft',
     scriptApproved:false, sampleApproved:false, musicId:null, volume:0.18, createdAt:Date.now(), updatedAt:Date.now()});
 }
 export function update(id: string, input: unknown): Project {
@@ -81,7 +83,7 @@ export function update(id: string, input: unknown): Project {
     project.sampleApproved = false;
     if(!styleChanged) for (const page of project.pages.slice(1)) { page.imageVersion++; delete page.image; page.status='idle'; }
   }
-  Object.assign(project, {title:value.title, styleId:value.styleId, musicId:value.musicId, volume:value.volume});
+  Object.assign(project, {title:value.title, styleId:value.styleId, hideHeaderFooter:value.hideHeaderFooter, musicId:value.musicId, volume:value.volume});
   project.revision++; delete project.final; delete project.error;
   if (project.scriptApproved) project.state = project.sampleApproved ? 'done' : (project.pages[0]?.image ? 'sample' : 'script');
   else project.state='script';

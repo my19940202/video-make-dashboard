@@ -7,10 +7,10 @@ function toast(message){$('toast').textContent=message;$('toast').hidden=false;c
 async function api(url,method='GET',data){const res=await fetch(url,{method,headers:data && !(data instanceof FormData)?{'content-type':'application/json'}:undefined,body:data?data instanceof FormData?data:JSON.stringify(data):undefined});const value=await res.json();if(!res.ok)throw new Error(value.error||'请求失败');return value;}
 async function guarded(fn){if(busy)return;busy=true;try{await fn();}catch(e){toast(e.message);}finally{busy=false;renderControls();}}
 const asset=(p,page)=>page.image?`/ppt/projects/${p.id}/assets/${page.image}`:'';
-function svgUrl(page,index,image,animate=false){return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(pageSvg(page,index,project.pages.length,image,animate,project.narrativeMode||'legal-case'))}`;}
+function svgUrl(page,index,image,animate=false){return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(pageSvg(page,index,project.pages.length,image,animate,project.narrativeMode||'legal-case',project.hideHeaderFooter))}`;}
 function mark(){dirty=true;$('saved').textContent='有未保存修改';renderPreview();renderControls();}
 function renderControls(){if(!project)return;const locked=generating()||busy;
-  ['saveButton','addPage','moveUp','moveDown','deletePage','redraw','pageTitle','pageBody','pagePrompt','pageDuration','pageEntrance','projectStyle','projectTitle','musicSelect','volume'].forEach(id=>$(id).disabled=locked);
+  ['saveButton','addPage','moveUp','moveDown','deletePage','redraw','pageTitle','pageBody','pagePrompt','pageDuration','pageEntrance','projectStyle','hideHeaderFooter','projectTitle','musicSelect','volume'].forEach(id=>$(id).disabled=locked);
   $('saveButton').disabled=locked||!dirty;$('redraw').disabled=locked||!project.scriptApproved||!project.pages.length;
   const map={script:[project.scriptApproved?'生成新样稿':'确认脚本，生成样稿','script'],sample:['确认样稿，开始制作','sample'],done:[project.final?'重新导出':'导出修改后的成片','render'],failed:['重试未完成步骤','retry']};
   const config=map[project.state];$('primaryAction').textContent=config?config[0]:labels[project.state];$('primaryAction').dataset.action=config?.[1]||'';$('primaryAction').disabled=locked||!config;
@@ -18,7 +18,7 @@ function renderControls(){if(!project)return;const locked=generating()||busy;
 function renderPreview(){if(!project)return;const page=project.pages[selected];if(!page){$('canvas').textContent='正在整理分页脚本…';return;}
   $('canvas').replaceChildren();try{const img=document.createElement('img');img.alt=page.title;img.src=svgUrl(page,selected,asset(project,page),true);$('canvas').append(img);}catch(e){const d=document.createElement('div');d.className='overflow-message';d.textContent=e.message;$('canvas').append(d);}
   $('duration').textContent=`${project.pages.length} 页 · 总时长 ${project.pages.reduce((n,p)=>n+Number(p.duration),0).toFixed(1)} 秒`;
-  $('textCount').textContent=`${page.body.length} / 180 字`;
+  $('textCount').textContent=`${page.body.length} / 105 字 · 最多 5 行`;
 }
 // SVG image URLs cannot fetch nested remote images, so embed the generated illustration for preview.
 const images=new Map();
@@ -27,7 +27,7 @@ async function embedPreview(){if(!project)return;const id=project.id,idx=selecte
     if(project?.id===id && selected===idx){const img=$('canvas').querySelector('img');if(img)img.src=svgUrl(project.pages[idx],idx,images.get(url),true);}
   }catch(e){toast('预览图片加载失败：'+e.message);}
 }
-function render(){if(!project)return;$('empty').hidden=true;$('workspace').hidden=false;selected=Math.min(selected,Math.max(0,project.pages.length-1));$('projectTitle').value=project.title;$('projectMode').textContent=project.narrativeMode==='childhood-memoir'?'童年回忆录':'法律案例解读';$('projectStyle').value=project.styleId||'legacy-blue';
+function render(){if(!project)return;$('empty').hidden=true;$('workspace').hidden=false;selected=Math.min(selected,Math.max(0,project.pages.length-1));$('projectTitle').value=project.title;$('projectMode').textContent=project.narrativeMode==='childhood-memoir'?'童年回忆录':'法律案例解读';$('projectStyle').value=project.styleId||'legacy-blue';$('hideHeaderFooter').checked=!!project.hideHeaderFooter;
   $('saved').textContent=dirty?'有未保存修改':'已保存到本机';const phase=project.state==='script'||project.state==='drafting'?0:!project.sampleApproved?1:project.state==='done'?3:2;
   document.querySelectorAll('[data-step]').forEach(e=>e.classList.toggle('active',Number(e.dataset.step)===phase));
   const completed=project.pages.filter(p=>p.image).length;$('notice').className=project.error?'error':'';
@@ -45,13 +45,14 @@ function render(){if(!project)return;$('empty').hidden=true;$('workspace').hidde
 function setAudio(){const id=$('musicSelect').value;$('musicPreview').hidden=!id;if(id){const src=`/ppt/music/${id}`;if($('musicPreview').getAttribute('src')!==src)$('musicPreview').src=src;$('musicPreview').volume=Number($('volume').value);}else{$('musicPreview').pause();$('musicPreview').removeAttribute('src');}}
 async function loadMusic(){music=await api('/ppt/music');$('musicSelect').replaceChildren(new Option('无背景音乐',''),...music.map(m=>new Option(m.name,m.id)));if(project)$('musicSelect').value=project.musicId||'';}
 async function openProject(id){if(dirty&&!confirm('当前修改尚未保存，放弃修改并切换任务？'))return;project=await api(`/ppt/projects/${id}`);selected=0;dirty=false;localStorage.setItem('story-ppt',id);render();}
-async function save(){if(!dirty)return;for(const page of project.pages)pageSvg(page,0,project.pages.length,'',false,project.narrativeMode);project=await api(`/ppt/projects/${project.id}`,'PUT',{revision:project.revision,title:project.title,styleId:project.styleId,narrativeMode:project.narrativeMode,pages:project.pages,musicId:project.musicId,volume:project.volume});dirty=false;render();}
+async function save(){if(!dirty)return;for(const page of project.pages)pageSvg(page,0,project.pages.length,'',false,project.narrativeMode,project.hideHeaderFooter);project=await api(`/ppt/projects/${project.id}`,'PUT',{revision:project.revision,title:project.title,styleId:project.styleId,narrativeMode:project.narrativeMode,hideHeaderFooter:project.hideHeaderFooter,pages:project.pages,musicId:project.musicId,volume:project.volume});dirty=false;render();}
 $('saveButton').onclick=()=>guarded(save);
 $('primaryAction').onclick=()=>guarded(async()=>{const action=$('primaryAction').dataset.action;await save();project=await api(`/ppt/projects/${project.id}/action`,'POST',{action,revision:project.revision});render();});
 $('redraw').onclick=()=>guarded(async()=>{if(selected===0 && project.sampleApproved && !confirm('重画样稿会重新确认风格，并更新其他页配图。继续？'))return;await save();project=await api(`/ppt/projects/${project.id}/action`,'POST',{action:'redraw',revision:project.revision,pageId:project.pages[selected].id});render();});
 for(const [id,key] of [['pageTitle','title'],['pageBody','body'],['pagePrompt','prompt'],['pageDuration','duration']])$(id).oninput=()=>{if(!project?.pages[selected])return;project.pages[selected][key]=key==='duration'?Number($(id).value):$(id).value;mark();embedPreview();};
 $('pageEntrance').onchange=()=>{if(!project?.pages[selected])return;project.pages[selected].entrance=$('pageEntrance').value;mark();embedPreview();};
 $('projectStyle').onchange=()=>{project.styleId=$('projectStyle').value;mark();};
+$('hideHeaderFooter').onchange=()=>{project.hideHeaderFooter=$('hideHeaderFooter').checked;mark();embedPreview();};
 $('projectTitle').oninput=()=>{project.title=$('projectTitle').value;mark();};
 $('musicSelect').onchange=()=>{project.musicId=$('musicSelect').value||null;setAudio();mark();};$('volume').oninput=()=>{project.volume=Number($('volume').value);setAudio();mark();};
 $('musicUpload').onchange=()=>guarded(async()=>{const f=$('musicUpload').files[0];if(!f)return;const form=new FormData();form.append('file',f);const added=await api('/ppt/music','POST',form);await loadMusic();$('musicUpload').value='';if(project){project.musicId=added.id;$('musicSelect').value=added.id;setAudio();mark();}toast('音乐已导入');});
