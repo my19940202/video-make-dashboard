@@ -13,24 +13,26 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
  const fullImage=props.layoutTemplate==='title-full-image';
  const cache=path.join(props.projectDir,'cache');fs.mkdirSync(cache,{recursive:true});
  const font=process.env.PPT_FONT || '/System/Library/Fonts/STHeiti Light.ttc';
+ const titleFont=process.env.PPT_TITLE_FONT || '/System/Library/Fonts/STHeiti Medium.ttc';
  if(!fs.existsSync(font))throw new Error(`缺少中文字体：${font}。请设置 PPT_FONT 指向支持中文的字体文件。`);
+ if(!fs.existsSync(titleFont))throw new Error(`缺少标题中文字体：${titleFont}。请设置 PPT_TITLE_FONT 指向支持中文的字体文件。`);
  const clips=[];
  for(let i=0;i<props.pages.length;i++){
   const page=props.pages[i];const imagePath=path.resolve(props.projectDir,page.image);
   if(!fs.existsSync(imagePath))throw new Error(`缺少第${i+1}页配图：${imagePath}`);
   const image=fs.readFileSync(imagePath).toString('base64');const svg=pageSvg(page,i,props.pages.length,`data:image/png;base64,${image}`,false,props.narrativeMode,props.hideHeaderFooter,props.layoutTemplate);
-  const pageHash=hash(svg+':layout-v4');const png=path.join(cache,pageHash+'.png');
+  const pageHash=hash(svg+':layout-v5:'+titleFont);const png=path.join(cache,pageHash+'.png');
   if(!fs.existsSync(png)){
    const textRoot=path.join(cache,pageHash);const titlePath=textRoot+'-title.txt',bodyPath=textRoot+'-body.txt';
    const title=wrap(page.title,13),body=wrap(page.body,21);
    if(title.length>3||page.body.length>105||body.length>5)throw new Error(`第${i+1}页文字超出版面，请缩短标题或正文（正文最多105字、5行）。`);
    fs.writeFileSync(titlePath,title.join('\n'));fs.writeFileSync(bodyPath,body.join('\n'));
-   const draw=(textfile,size,y,colour,spacing)=>`drawtext=fontfile=${font.replace(/ /g,'\\ ')}:textfile=${textfile}:fontcolor=${colour}:fontsize=${size}:line_spacing=${spacing}:x=88:y=${y}:expansion=none`;
+   const draw=(textfile,size,y,colour,spacing,fontfile=font)=>`drawtext=fontfile=${fontfile.replace(/ /g,'\\ ')}:textfile=${textfile}:fontcolor=${colour}:fontsize=${size}:line_spacing=${spacing}:x=88:y=${y}:expansion=none`;
    const header=props.hideHeaderFooter?'':`drawbox=x=88:y=96:w=8:h=32:color=0x355cce:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${pageLabel}':fontcolor=0x546783:fontsize=25:x=116:y=96:expansion=none,`;
    const footer=props.hideHeaderFooter?'':`,drawbox=x=88:y=1810:w=904:h=1:color=0xd4deeb:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${String(i+1).padStart(2,'0')} / ${String(props.pages.length).padStart(2,'0')}':fontcolor=0x72829a:fontsize=24:x=88:y=1840:expansion=none,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${page.duration} 秒':fontcolor=0x72829a:fontsize=24:x=920:y=1840:expansion=none`;
    const layout=fullImage
-    ? `[1:v]scale=1080:1440:force_original_aspect_ratio=increase,crop=1080:1440[art];[0:v][art]overlay=0:480,${draw(titlePath,64,205,'0x172a46',18)}[v]`
-    : `[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath,64,205,'0x172a46',18)},${draw(bodyPath,42,1465,'0x263b57',15)}${footer}[v]`;
+    ? `[1:v]scale=1080:1440:force_original_aspect_ratio=increase,crop=1080:1440[art];[0:v][art]overlay=0:480,${draw(titlePath,64,205,'0x172a46',18,titleFont)}[v]`
+    : `[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath,64,205,'0x172a46',18,titleFont)},${draw(bodyPath,42,1465,'0x263b57',15)}${footer}[v]`;
    try{cmd('ffmpeg',['-y','-v','error','-f','lavfi','-i','color=c=0xf6f8fc:s=1080x1920:r=1:d=1','-i',imagePath,'-filter_complex',layout,'-map','[v]','-frames:v','1',png]);}
    catch(error){throw new Error(`第${i+1}页排版失败：${error.message}`);}
   }

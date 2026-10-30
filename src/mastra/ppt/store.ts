@@ -12,7 +12,7 @@ export type LayoutTemplate = z.infer<typeof layoutTemplateSchema>;
 export const pageSchema = z.object({
   id: z.string().uuid(), title: z.string().trim().min(1).max(32),
   body: z.string().trim().min(1).max(105), prompt: z.string().trim().min(1).max(2500),
-  duration: z.number().min(4).max(30),
+  duration: z.number().min(1).max(30),
   entrance: z.enum(['fade','blur','float']).default('fade'),
   characterIds: z.array(z.string().uuid()).max(3).optional(),
   locationId: z.string().uuid().nullable().optional(),

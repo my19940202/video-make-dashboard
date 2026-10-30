@@ -95,8 +95,7 @@ export async function executePhase(id:string):Promise<void> {
       const response=await agent.generate(planningPrompt(p.narrativeMode,p.title,p.source)+referenceInstructions,{structuredOutput:{schema:generatedSchema}});
       const generated=generatedSchema.parse(response.object);
       p=current(id,revision);
-      const raw=generated.pages.map(page=>Math.max(7,Math.min(15,Math.ceil(page.body.length/5))));
-      const total=raw.reduce((a,b)=>a+b,0); const target=Math.max(60,Math.min(90,total));
+      const raw=generated.pages.map(page=>Math.max(3,Math.min(12,Math.ceil(page.body.length/8))));
       const characters=new Map<string,string>(), locations=new Map<string,string>();
       p.references=[...generated.characters.map(item=>{const id=randomUUID();characters.set(item.key,id);return {id,kind:'character' as const,name:item.name.slice(0,40),description:item.description.slice(0,500),imageVersion:1,status:'idle' as const};}),
         ...generated.locations.map(item=>{const id=randomUUID();locations.set(item.key,id);return {id,kind:'location' as const,name:item.name.slice(0,40),description:item.description.slice(0,500),imageVersion:1,status:'idle' as const};})];
@@ -104,7 +103,7 @@ export async function executePhase(id:string):Promise<void> {
         const {characterKeys,locationKey,...content}=page;
         return {...content,id:randomUUID(),characterIds:[...new Set(characterKeys.map(key=>characters.get(key)).filter((id):id is string=>!!id))],
           locationId:locationKey?locations.get(locationKey)||null:null,
-          duration:Math.round(raw[i]*target/total*10)/10,imageVersion:1,status:'idle'};
+          duration:raw[i],imageVersion:1,status:'idle'};
       });
       p.state='script'; save(p); return;
     }
@@ -138,8 +137,6 @@ export function approve(id:string, action:string, revision:number, pageId?:strin
   if(['drafting','references-generating','sample-generating','producing','rendering'].includes(p.state)) return p;
   if(action==='script') {
     if(p.state!=='script') throw new Error('当前不在脚本确认阶段');
-    const total=p.pages.reduce((n,s)=>n+s.duration,0);
-    if(total<60 || total>90.5) throw new Error('总时长须为60–90秒，请调整页面时长');
     p.scriptApproved=true;
     p.referenceWorkflowEnabled=!!(p.referenceWorkflowVersion && p.references?.length && imageSettings().provider==='codex');
     if(p.referenceWorkflowEnabled) {

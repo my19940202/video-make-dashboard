@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const narrativeModeSchema = z.enum(['legal-case', 'childhood-memoir']);
 export type NarrativeMode = z.infer<typeof narrativeModeSchema>;
 
-const common = '把用户材料整理为无配音的竖屏视频，按要点组织6至8页，不逐句拆图。只使用提供的材料，不编造事实。每页标题不超过32字，正文不超过105字且必须独立可读，排版最多5行；配图提示词只描述一个可画的瞬间，不包含文字排版或画风要求。单页4至30秒，总时长60至90秒。';
+const common = '把用户材料整理为无配音的竖屏视频，按要点组织6至8页，不逐句拆图。只使用提供的材料，不编造事实。每页标题不超过32字，正文不超过105字且必须独立可读，排版最多5行；配图提示词只描述一个可画的瞬间，不包含文字排版或画风要求。每页停留时间按内容估算，单页1至30秒，不要求整条视频达到固定时长。';
 
 export function planningPrompt(mode: NarrativeMode, title: string, source: string): string {
   const direction = mode === 'childhood-memoir'
