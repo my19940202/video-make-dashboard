@@ -18,6 +18,13 @@ fi
 ln -sfn "$shared/data" "$release/data"
 ln -sfn "$shared/.env.production" "$release/.env.production"
 cd "$release"
+# 锁文件是 pnpm 9。系统里若是更新的 pnpm，会拒绝执行 esbuild 的安装脚本。
+pnpm_prefix="${HOME}/.local/share/story-make/pnpm-9.15.4"
+if [[ ! -x "${pnpm_prefix}/bin/pnpm" ]] || [[ "$("${pnpm_prefix}/bin/pnpm" --version)" != 9.15.4 ]]; then
+  mkdir -p "${pnpm_prefix}"
+  npm install -g --prefix "${pnpm_prefix}" pnpm@9.15.4
+fi
+export PATH="${pnpm_prefix}/bin:${PATH}"
 pnpm install --frozen-lockfile --prod=false
 pnpm run check
 pnpm run build

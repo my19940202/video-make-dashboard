@@ -12,15 +12,14 @@ sudo apt-get install -y curl ca-certificates rsync ffmpeg fonts-noto-cjk caddy s
 curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
 sudo -E bash /tmp/nodesource_setup.sh
 sudo apt-get install -y nodejs
-sudo npm install -g pnpm@9.15.4 pm2
+sudo npm install -g pm2
 node --version
-pnpm --version
 ffmpeg -version
 test -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 test -f /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
 ```
 
-Node.js 须为 22.13.0 或更新的 22.x。`fonts-noto-cjk` 提供视频导出使用的中文字体；如字体实际路径不同，用 `fc-match 'Noto Sans CJK SC' -f '%{file}\n'` 查到路径后修改生产环境文件。
+Node.js 须为 22.13.0 或更新版本。部署脚本会在 `deploy` 用户目录安装 pnpm 9.15.4，不使用系统里更新的 pnpm。`fonts-noto-cjk` 提供视频导出使用的中文字体；如字体实际路径不同，用 `fc-match 'Noto Sans CJK SC' -f '%{file}\n'` 查到路径后修改生产环境文件。
 
 创建专门的部署账号和共享目录；以下命令中的 `deploy` 是本指南统一使用的账号名：
 
