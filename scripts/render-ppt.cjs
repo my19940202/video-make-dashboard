@@ -43,9 +43,12 @@ function fontFile(file) {
 
 (async () => {
   const props = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-  const { pageSvg, legalTextLines } = await import(
+  const { pageSvg, legalTextLines, legalCarousel } = await import(
     pathToFileURL(path.resolve(__dirname, '../public/workbench/layout.mjs')),
   );
+  const titleSpacing = legalCarousel.titleStep - legalCarousel.titleSize;
+  const bodySpacing = legalCarousel.bodyStep - legalCarousel.bodySize;
+  const bodyDrawY = legalCarousel.bodyBaseline - legalCarousel.bodySize;
   const pageLabel = props.narrativeMode === 'childhood-memoir' ? '童年手记' : '案例笔记';
   const fullImage = props.layoutTemplate === 'title-full-image';
   const legal = props.layoutTemplate === 'legal-carousel-v2';
@@ -107,7 +110,7 @@ function fontFile(file) {
         ? ''
         : `,drawtext=fontfile=${fontFile(font)}:text='${pageNo}':fontcolor=0x72829a:fontsize=24:x=48:y=1876:expansion=none`;
       const layout = legal
-        ? `[0:v]drawbox=x=48:y=360:w=984:h=1312:color=0xe9eef7:t=fill[base];[1:v]scale=984:1312:force_original_aspect_ratio=decrease,pad=984:1312:(ow-iw)/2:(oh-ih)/2:color=0xe9eef7[art];[base][art]overlay=48:360,${legalHeader}${draw(titlePath, 128, 94, '0x172a46', 2, titleFont, 48)},drawbox=x=48:y=1440:w=984:h=420:color=0xf8f7f2@0.96:t=fill,${draw(bodyPath, 68, 1462, '0x172a46', 32, titleFont, 80)}${legalFooter}[v]`
+        ? `[0:v]drawbox=x=48:y=360:w=984:h=1312:color=0xe9eef7:t=fill[base];[1:v]scale=984:1312:force_original_aspect_ratio=decrease,pad=984:1312:(ow-iw)/2:(oh-ih)/2:color=0xe9eef7[art];[base][art]overlay=48:360,${legalHeader}${draw(titlePath, legalCarousel.titleSize, legalCarousel.titleDrawY, '0x172a46', titleSpacing, titleFont, legalCarousel.titleX)},drawbox=x=${legalCarousel.panelX}:y=${legalCarousel.panelY}:w=${legalCarousel.panelWidth}:h=${legalCarousel.panelHeight}:color=0xf8f7f2@0.96:t=fill,${draw(bodyPath, legalCarousel.bodySize, bodyDrawY, '0x172a46', bodySpacing, titleFont, legalCarousel.bodyX)}${legalFooter}[v]`
         : fullImage
           ? `[1:v]scale=1080:1440:force_original_aspect_ratio=increase,crop=1080:1440[art];[0:v][art]overlay=0:480,${draw(titlePath, 64, 205, '0x172a46', 18, titleFont)}[v]`
           : `[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath, 64, 205, '0x172a46', 18, titleFont)},${draw(bodyPath, 42, 1465, '0x263b57', 15)}${footer}[v]`;
@@ -140,9 +143,9 @@ function fontFile(file) {
     if (!fs.existsSync(clip)) {
       const regions = legal
         ? [
-            ['title', 45, 315, 0.12],
+            ['title', legalCarousel.titleRegionY, legalCarousel.titleRegionHeight, 0.12],
             ['art', 360, 1312, 0.42],
-            ['body', 1440, 420, 0.72],
+            ['body', legalCarousel.panelY, legalCarousel.panelHeight, 0.72],
           ]
         : fullImage
           ? [

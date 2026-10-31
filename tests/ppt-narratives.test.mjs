@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {build} from 'esbuild';
-import {pageSvg} from '../public/workbench/layout.mjs';
+import {legalTextLines, pageSvg} from '../public/workbench/layout.mjs';
 
 const bundled=await build({entryPoints:['src/mastra/ppt/narratives.ts'],bundle:true,platform:'node',format:'esm',write:false});
 const {planningPrompt,pageLabel}=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].text).toString('base64'));
@@ -18,6 +18,13 @@ test('法律与回忆录使用不同文本结构',()=>{
   assert.match(memoir,/不得虚构事件、对白/);
   assert.match(memoir,/我小时候住在外婆家/);
   assert.doesNotMatch(memoir,/按问题、经过、争议、结论、行动建议组织/);
+});
+
+test('法律轮播按字号折行，并在标点处断开',()=>{
+  const title=legalTextLines({title:'车位能装充电桩吗',body:'买了新能源车，物业却不肯配合。法院怎么看？'}).title;
+  const body=legalTextLines({title:'车位能装充电桩吗',body:'买了新能源车，物业却不肯配合。法院怎么看？'}).body;
+  assert.deepEqual(title,['车位能装充电桩吗']);
+  assert.deepEqual(body,['买了新能源车，物业却不肯配合。','法院怎么看？']);
 });
 
 test('预览页眉按口吻切换',()=>{

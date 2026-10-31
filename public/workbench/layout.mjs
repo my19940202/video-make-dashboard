@@ -12,12 +12,24 @@ export function escapeXml(value) {
   }[c]));
 }
 
+function charWidth(ch) {
+  return /[\u0000-\u00ff]/.test(ch) ? 0.56 : 1;
+}
+
+function textWidth(value) {
+  let width = 0;
+  for (const ch of value) width += charWidth(ch);
+  return width;
+}
+
+const breakAfter = /[，。！？、；：,.!?;:]/;
+
 export function wrap(value, limit) {
   const lines = [];
   let line = '';
   let width = 0;
   for (const ch of value) {
-    const w = /[\u0000-\u00ff]/.test(ch) ? 0.56 : 1;
+    const w = charWidth(ch);
     if (ch === '\n') {
       lines.push(line);
       line = '';
@@ -36,9 +48,66 @@ export function wrap(value, limit) {
   return lines;
 }
 
+// 先尽量放满一行；放不下时退到最近的标点。避免把「充电桩」「配合」从中间切开。
+function wrapSoft(value, limit) {
+  const lines = [];
+  for (const paragraph of String(value).split('\n')) {
+    let rest = [...paragraph];
+    if (rest.length === 0) {
+      lines.push('');
+      continue;
+    }
+    while (rest.length) {
+      let width = 0;
+      let count = 0;
+      let punct = -1;
+      for (const ch of rest) {
+        const w = charWidth(ch);
+        if (width + w > limit) break;
+        width += w;
+        if (breakAfter.test(ch)) punct = count;
+        count++;
+      }
+      if (count === 0) count = 1;
+      const overflow = count < rest.length;
+      let cut = count;
+      if (overflow && punct > 0) cut = punct + 1;
+      else if (overflow && rest.length - count === 1 && count > 2) cut = count - 1;
+      lines.push(rest.slice(0, cut).join(''));
+      rest = rest.slice(cut);
+    }
+  }
+  return lines;
+}
+
+function wrapTitle(value, limit) {
+  const paragraphs = String(value).split('\n');
+  if (paragraphs.length > 1) return wrapSoft(value, limit);
+  const text = paragraphs[0];
+  if (textWidth(text) <= limit) return text ? [text] : [];
+  const chars = [...text];
+  if (textWidth(text) <= limit * 2) {
+    let best = null;
+    for (let i = 1; i < chars.length; i++) {
+      const left = chars.slice(0, i).join('');
+      const right = chars.slice(i).join('');
+      if (textWidth(left) > limit || textWidth(right) > limit) continue;
+      const punct = breakAfter.test(chars[i - 1]) ? 0 : 1;
+      const rank = punct * 100 + Math.abs(textWidth(left) - textWidth(right));
+      if (!best || rank < best.rank) best = { rank, left, right };
+    }
+    if (best) return [best.left, best.right];
+  }
+  return wrapSoft(text, limit);
+}
+
+function legalLimit(size, x) {
+  return (1080 - x - 48) / size;
+}
+
 export function legalTextLines(page) {
-  const title = wrap(page.title, 6.5);
-  const body = wrap(page.body, 12);
+  const title = wrapTitle(page.title, legalLimit(legalCarousel.titleSize, legalCarousel.titleX));
+  const body = wrapSoft(page.body, legalLimit(legalCarousel.bodySize, legalCarousel.bodyX));
   const sentenceCount = (page.body.match(/[。！？!?]/g) || []).length;
   if (title.length > 2 || page.body.length > 42 || body.length > 4 || sentenceCount > 2) {
     throw new Error('法律轮播文字超出版面：标题最多两行，正文最多两句、42字、4行');
@@ -63,6 +132,29 @@ function motionStyle(effect, animate) {
 function entranceEffect(page) {
   return ['fade', 'blur', 'float'].includes(page.entrance) ? page.entrance : 'fade';
 }
+
+// 法律轮播的字号和位置。预览与 scripts/render-ppt.cjs 都读这里。
+// titleSize / bodySize 是字号，titleStep / bodyStep 是相邻两行基线的距离，必须大于字号。
+// bodyBaseline 是正文第一行基线：加大则离上方图片更远，减小则更近。panelY 是盖住图片下缘的白底上沿。
+export const legalCarousel = {
+  titleBaseline: 195,
+  titleSize: 90,
+  titleWeight: 600,
+  titleStep: 120,
+  titleX: 48,
+  titleDrawY: 94,
+  titleRegionY: 45,
+  titleRegionHeight: 315,
+  bodyBaseline: 1530,
+  bodySize: 60,
+  bodyWeight: 500,
+  bodyStep: 100,
+  bodyX: 80,
+  panelX: 48,
+  panelY: 1440,
+  panelWidth: 984,
+  panelHeight: 420,
+};
 
 export function pageSvg(
   page,
@@ -102,15 +194,15 @@ export function pageSvg(
       `<g font-family="${fontFamily}">`,
       '<g class="entrance title">',
       header,
-      lines(title, 195, 128, 700, 130),
+      lines(title, legalCarousel.titleBaseline, legalCarousel.titleSize, legalCarousel.titleWeight, legalCarousel.titleStep, legalCarousel.titleX),
       '</g>',
       '<g class="entrance art">',
       '<rect x="48" y="360" width="984" height="1312" fill="#e9eef7"/>',
       art,
       '</g>',
       '<g class="entrance body">',
-      '<rect x="48" y="1440" width="984" height="420" fill="#f8f7f2" fill-opacity=".96"/>',
-      lines(body, 1530, 68, 600, 100, 80),
+      `<rect x="${legalCarousel.panelX}" y="${legalCarousel.panelY}" width="${legalCarousel.panelWidth}" height="${legalCarousel.panelHeight}" fill="#f8f7f2" fill-opacity=".96"/>`,
+      lines(body, legalCarousel.bodyBaseline, legalCarousel.bodySize, legalCarousel.bodyWeight, legalCarousel.bodyStep, legalCarousel.bodyX),
       '</g>',
       footer,
       '</g></svg>',
