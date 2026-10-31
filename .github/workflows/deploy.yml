@@ -1,0 +1,66 @@
+name: Check and deploy Lighthouse
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+
+  deploy:
+    needs: check
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: story-make-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?missing DEPLOY_HOST}"
+          : "${DEPLOY_USER:?missing DEPLOY_USER}"
+          : "${DEPLOY_SSH_KEY:?missing DEPLOY_SSH_KEY}"
+          : "${DEPLOY_SSH_KNOWN_HOSTS:?missing DEPLOY_SSH_KNOWN_HOSTS}"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          chmod 600 "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+      - name: Transfer and deploy release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="/srv/story-make/releases/$GITHUB_SHA"
+          ssh -i "$RUNNER_TEMP/deploy_key" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$release'"
+          rsync -az --delete \
+            --exclude='/.git' --exclude='/node_modules' --exclude='/.mastra' \
+            --exclude='/data' --exclude='/.env' --exclude='/.env.production' \
+            -e "ssh -i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=yes" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$release/"
+          ssh -i "$RUNNER_TEMP/deploy_key" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash '$release/scripts/deploy-production.sh' '$GITHUB_SHA'"
