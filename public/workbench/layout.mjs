@@ -7,7 +7,19 @@ export function wrap(value,limit) {
   }
   if(line)lines.push(line);return lines;
 }
+export function legalTextLines(page) {
+  const title=wrap(page.title,6.5),body=wrap(page.body,12);
+  if(title.length>2||page.body.length>42||body.length>4||(page.body.match(/[。！？!?]/g)||[]).length>2)throw new Error('法律轮播文字超出版面：标题最多两行，正文最多两句、42字、4行');
+  return {title,body};
+}
 export function pageSvg(page,index,total,image='',animate=false,narrativeMode='legal-case',hideHeaderFooter=false,layoutTemplate='text-illustration') {
+  if(layoutTemplate==='legal-carousel-v2') {
+    const {title,body}=legalTextLines(page);
+    const effect=['fade','blur','float'].includes(page.entrance)?page.entrance:'fade';
+    const motion=animate?`<style>.entrance{animation:${effect} .55s ease-out both}.title{animation-delay:.12s}.art{animation-delay:.42s}.body{animation-delay:.72s}@keyframes fade{from{opacity:0}to{opacity:1}}@keyframes blur{from{opacity:0;filter:blur(16px)}to{opacity:1;filter:blur(0)}}@keyframes float{from{opacity:0;transform:translateY(42px)}to{opacity:1;transform:translateY(0)}}</style>`:'';
+    const lines=(items,y,size,weight,step)=>items.map((line,i)=>`<text x="120" y="${y+i*step}" font-size="${size}" font-weight="${weight}" fill="#172a46">${escapeXml(line)}</text>`).join('');
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1920" viewBox="0 0 1080 1920">${motion}<rect width="1080" height="1920" fill="#f8f7f2"/><g font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,sans-serif"><g class="entrance title">${hideHeaderFooter?'':'<text x="120" y="105" font-size="26" font-weight="600" fill="#546783">案例笔记</text>'}${lines(title,236,128,700,130)}</g><g class="entrance art"><rect x="185" y="420" width="710" height="940" rx="24" fill="#e9eef7"/>${image?`<image x="195" y="430" width="690" height="920" preserveAspectRatio="xMidYMid slice" xlink:href="${escapeXml(image)}"/>`:'<text x="540" y="920" text-anchor="middle" font-size="32" fill="#8191a9">配图生成后出现在这里</text>'}</g><g class="entrance body">${lines(body,1450,68,600,100)}</g>${hideHeaderFooter?'':`<text x="120" y="1855" font-size="24" fill="#72829a">${String(index+1).padStart(2,'0')} / ${String(total).padStart(2,'0')}</text>`}</g></svg>`;
+  }
   const title=wrap(page.title,13), body=wrap(page.body,21);
   if(title.length>3 || page.body.length>105 || body.length>5) throw new Error('文字超出版面，请缩短标题或正文（正文最多105字、5行）');
   const text=(lines,y,size,weight,color,step)=>lines.map((line,i)=>`<text x="88" y="${y+i*step}" font-size="${size}" font-weight="${weight}" fill="${color}">${escapeXml(line)}</text>`).join('');

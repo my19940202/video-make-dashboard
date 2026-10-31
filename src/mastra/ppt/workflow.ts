@@ -10,6 +10,8 @@ export const pptWorkflow=createWorkflow({id:'ppt-video-workflow',inputSchema:sch
   })).commit();
 const active=new Set<string>();
 export function launch(id:string) {
+  if(process.env.SAAS_MODE==='1' && process.env.PPT_WORKER!=='1')return;
+  if(process.env.SAAS_MODE==='1' && active.size>=1)return;
   if(active.has(id)) return;
   const p=read(id); if(!['drafting','references-generating','sample-generating','producing','rendering'].includes(p.state)) return;
   active.add(id);
@@ -20,4 +22,4 @@ export function launch(id:string) {
     finally { active.delete(id); }
   })();
 }
-export function recover() { for(const project of list()) launch(project.id); }
+export function recover() { if(process.env.SAAS_MODE==='1' && process.env.PPT_WORKER!=='1')return;for(const project of list()) launch(project.id); }

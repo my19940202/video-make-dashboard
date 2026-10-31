@@ -1,0 +1,39 @@
+services:
+  app:
+    image: ${STORY_IMAGE:-story-make:local}
+    build: .
+    env_file: ${STORY_ENV_FILE:-.env.production}
+    environment:
+      PORT: 4112
+      SAAS_MODE: 1
+      PPT_WORKER: 0
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+  worker:
+    image: ${STORY_IMAGE:-story-make:local}
+    env_file: ${STORY_ENV_FILE:-.env.production}
+    environment:
+      PORT: 4113
+      SAAS_MODE: 1
+      PPT_WORKER: 1
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+volumes:
+  caddy_data:
+  caddy_config:

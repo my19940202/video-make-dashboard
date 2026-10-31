@@ -8,7 +8,7 @@ const apiBase = () => (process.env.DRAW_THINGS_URL || 'http://127.0.0.1:7860').r
 export async function generateImage(prompt: string, styleId: StyleId = 'legacy-blue', layoutTemplate: LayoutTemplate = 'text-illustration'): Promise<{bytes: Buffer; durationMs: number}> {
   const started=Date.now();
   const referenced=styleId!=='legacy-blue';
-  const portrait=layoutTemplate==='title-full-image';
+  const portrait=layoutTemplate==='title-full-image'||layoutTemplate==='legal-carousel-v2';
   const width=portrait?576:referenced?960:768;
   const height=portrait?768:referenced?960:768;
   const image=referenced?readFileSync(resolve(appRoot,'assets/style-references',...(portrait?['portrait']:[]),`${styleId}.png`)).toString('base64'):undefined;

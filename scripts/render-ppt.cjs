@@ -8,9 +8,10 @@ function cmd(name,args){const result=spawnSync(name,args,{encoding:'utf8',maxBuf
 function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of value){if(ch==='\n'){lines.push(line);line='';width=0;continue;}const next=/[\u0000-\u00ff]/.test(ch)?.56:1;if(width+next>limit){lines.push(line);line='';width=0;}line+=ch;width+=next;}if(line)lines.push(line);return lines;}
 (async()=>{
  const props=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
- const {pageSvg}=await import(pathToFileURL(path.resolve(__dirname,'../public/workbench/layout.mjs')));
+ const {pageSvg,legalTextLines}=await import(pathToFileURL(path.resolve(__dirname,'../public/workbench/layout.mjs')));
  const pageLabel=props.narrativeMode==='childhood-memoir'?'童年手记':'案例笔记';
  const fullImage=props.layoutTemplate==='title-full-image';
+ const legal=props.layoutTemplate==='legal-carousel-v2';
  const cache=path.join(props.projectDir,'cache');fs.mkdirSync(cache,{recursive:true});
  const font=process.env.PPT_FONT || '/System/Library/Fonts/STHeiti Light.ttc';
  const titleFont=process.env.PPT_TITLE_FONT || '/System/Library/Fonts/STHeiti Medium.ttc';
@@ -24,25 +25,31 @@ function wrap(value,limit){const lines=[];let line='',width=0;for(const ch of va
   const pageHash=hash(svg+':layout-v5:'+titleFont);const png=path.join(cache,pageHash+'.png');
   if(!fs.existsSync(png)){
    const textRoot=path.join(cache,pageHash);const titlePath=textRoot+'-title.txt',bodyPath=textRoot+'-body.txt';
-   const title=wrap(page.title,13),body=wrap(page.body,21);
-   if(title.length>3||page.body.length>105||body.length>5)throw new Error(`第${i+1}页文字超出版面，请缩短标题或正文（正文最多105字、5行）。`);
+   const {title,body}=legal?legalTextLines(page):{title:wrap(page.title,13),body:wrap(page.body,21)};
+   if(!legal&&(title.length>3||page.body.length>105||body.length>5))throw new Error(`第${i+1}页文字超出版面，请缩短标题或正文（正文最多105字、5行）。`);
    fs.writeFileSync(titlePath,title.join('\n'));fs.writeFileSync(bodyPath,body.join('\n'));
-   const draw=(textfile,size,y,colour,spacing,fontfile=font)=>`drawtext=fontfile=${fontfile.replace(/ /g,'\\ ')}:textfile=${textfile}:fontcolor=${colour}:fontsize=${size}:line_spacing=${spacing}:x=88:y=${y}:expansion=none`;
+   const draw=(textfile,size,y,colour,spacing,fontfile=font,x=88)=>`drawtext=fontfile=${fontfile.replace(/ /g,'\\ ')}:textfile=${textfile}:fontcolor=${colour}:fontsize=${size}:line_spacing=${spacing}:x=${x}:y=${y}:expansion=none`;
    const header=props.hideHeaderFooter?'':`drawbox=x=88:y=96:w=8:h=32:color=0x355cce:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${pageLabel}':fontcolor=0x546783:fontsize=25:x=116:y=96:expansion=none,`;
    const footer=props.hideHeaderFooter?'':`,drawbox=x=88:y=1810:w=904:h=1:color=0xd4deeb:t=fill,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${String(i+1).padStart(2,'0')} / ${String(props.pages.length).padStart(2,'0')}':fontcolor=0x72829a:fontsize=24:x=88:y=1840:expansion=none,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${page.duration} 秒':fontcolor=0x72829a:fontsize=24:x=920:y=1840:expansion=none`;
-   const layout=fullImage
-    ? `[1:v]scale=1080:1440:force_original_aspect_ratio=increase,crop=1080:1440[art];[0:v][art]overlay=0:480,${draw(titlePath,64,205,'0x172a46',18,titleFont)}[v]`
-    : `[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath,64,205,'0x172a46',18,titleFont)},${draw(bodyPath,42,1465,'0x263b57',15)}${footer}[v]`;
-   try{cmd('ffmpeg',['-y','-v','error','-f','lavfi','-i','color=c=0xf6f8fc:s=1080x1920:r=1:d=1','-i',imagePath,'-filter_complex',layout,'-map','[v]','-frames:v','1',png]);}
+   const legalHeader=props.hideHeaderFooter?'':`drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='案例笔记':fontcolor=0x546783:fontsize=26:x=120:y=80:expansion=none,`;
+   const legalFooter=props.hideHeaderFooter?'':`,drawtext=fontfile=${font.replace(/ /g,'\\ ')}:text='${String(i+1).padStart(2,'0')} / ${String(props.pages.length).padStart(2,'0')}':fontcolor=0x72829a:fontsize=24:x=120:y=1830:expansion=none`;
+   const layout=legal
+    ? `[0:v]drawbox=x=185:y=420:w=710:h=940:color=0xe9eef7:t=fill[base];[1:v]scale=690:920:force_original_aspect_ratio=increase,crop=690:920[art];[base][art]overlay=195:430,${legalHeader}${draw(titlePath,128,135,'0x172a46',2,titleFont,120)},${draw(bodyPath,68,1390,'0x172a46',32,titleFont,120)}${legalFooter}[v]`
+    : fullImage
+      ? `[1:v]scale=1080:1440:force_original_aspect_ratio=increase,crop=1080:1440[art];[0:v][art]overlay=0:480,${draw(titlePath,64,205,'0x172a46',18,titleFont)}[v]`
+      : `[0:v]drawbox=x=64:y=480:w=952:h=952:color=0xe9eef7:t=fill[base];[1:v]scale=920:920:force_original_aspect_ratio=increase,crop=920:920[art];[base][art]overlay=80:496,${header}${draw(titlePath,64,205,'0x172a46',18,titleFont)},${draw(bodyPath,42,1465,'0x263b57',15)}${footer}[v]`;
+   try{cmd('ffmpeg',['-y','-v','error','-f','lavfi','-i',`color=c=${legal?'0xf8f7f2':'0xf6f8fc'}:s=1080x1920:r=1:d=1`,'-i',imagePath,'-filter_complex',layout,'-map','[v]','-frames:v','1',png]);}
    catch(error){throw new Error(`第${i+1}页排版失败：${error.message}`);}
   }
   const entrance=['fade','blur','float'].includes(page.entrance)?page.entrance:'fade';
   const clip=path.join(cache,hash(pageHash+':'+page.duration+':'+entrance+':motion-v5')+'.mp4');
   if(!fs.existsSync(clip)){
-   const regions=fullImage?[['title',80,390,.12],['art',480,1440,.42]]:[['title',80,390,.12],['art',480,952,.42],['body',1460,330,.72]];
+   const regions=legal?[['title',70,340,.12],['art',420,940,.42],['body',1380,400,.72]]:fullImage?[['title',80,390,.12],['art',480,1440,.42]]:[['title',80,390,.12],['art',480,952,.42],['body',1460,330,.72]];
    const names=regions.map(region=>region[0]);
    const splitNames=['base',...names,...(entrance==='blur'?names.map(name=>`${name}blur`):[])];
-   const parts=[`[0:v]split=${splitNames.length}${splitNames.map(name=>`[${name}]`).join('')}`,`[base]drawbox=x=0:y=80:w=1080:h=390:color=0xf6f8fc:t=fill,drawbox=x=0:y=480:w=1080:h=${fullImage?1440:952}:color=0xf6f8fc:t=fill${fullImage?'':',drawbox=x=0:y=1460:w=1080:h=330:color=0xf6f8fc:t=fill'}[b0]`];
+   const background=legal?'0xf8f7f2':'0xf6f8fc';
+   const clear=regions.map(([,y,h])=>`drawbox=x=0:y=${y}:w=1080:h=${h}:color=${background}:t=fill`).join(',');
+   const parts=[`[0:v]split=${splitNames.length}${splitNames.map(name=>`[${name}]`).join('')}`,`[base]${clear}[b0]`];
    let last='b0';
    for(let n=0;n<regions.length;n++){
     const [name,y,h,delay]=regions[n],next=`b${n+1}`;

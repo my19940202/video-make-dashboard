@@ -21,4 +21,5 @@ export const mastra = new Mastra({
   server: {host: '0.0.0.0', port: Number(process.env.PORT || 4112), apiRoutes: [artifactRoute, ...pptRoutes]},
 });
 
-setTimeout(recover, 1500).unref();
+if(process.env.SAAS_MODE==='1' && process.env.PPT_WORKER==='1')setInterval(recover,5000).unref();
+else if(process.env.SAAS_MODE!=='1')setTimeout(recover,1500).unref();

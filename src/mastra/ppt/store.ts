@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
@@ -7,7 +8,11 @@ import { styleIdSchema, type StyleId } from './styles';
 import { narrativeModeSchema, type NarrativeMode } from './narratives';
 
 export const root = resolve(appRoot, 'data/ppt');
-export const layoutTemplateSchema = z.enum(['text-illustration', 'title-full-image']);
+const saas = process.env.SAAS_MODE==='1';
+if(saas)mkdirSync(resolve(appRoot,'data'),{recursive:true});
+const db=saas?new DatabaseSync(resolve(appRoot,'data/saas.sqlite')):null;
+if(db)db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+export const layoutTemplateSchema = z.enum(['text-illustration', 'title-full-image', 'legal-carousel-v2']);
 export type LayoutTemplate = z.infer<typeof layoutTemplateSchema>;
 export const pageSchema = z.object({
   id: z.string().uuid(), title: z.string().trim().min(1).max(32),
@@ -35,11 +40,11 @@ export type Page = z.infer<typeof pageSchema> & {
   imageVersion: number; image?: string;
   status: 'idle'|'running'|'done'|'failed'; error?: string;
   generationMs?: number;
-  provider?: 'draw-things'|'codex'; codexJobId?: string;
+  provider?: 'draw-things'|'codex'|'cloudflare'; codexJobId?: string;
 };
 export type ReferenceAsset = z.infer<typeof referenceEditSchema> & {
   imageVersion: number; image?: string; status: 'idle'|'running'|'done'|'failed';
-  error?: string; generationMs?: number; provider?: 'draw-things'|'codex'; codexJobId?: string;
+  error?: string; generationMs?: number; provider?: 'draw-things'|'codex'|'cloudflare'; codexJobId?: string;
 };
 export type Project = {
   id: string; title: string; source: string; styleId: StyleId; narrativeMode: NarrativeMode; layoutTemplate: LayoutTemplate; hideHeaderFooter: boolean; pages: Page[]; revision: number;
@@ -56,12 +61,15 @@ export function projectDir(id: string): string {
 export function save(project: Project): Project {
   const dir = projectDir(project.id); mkdirSync(dir, { recursive: true });
   project.updatedAt = Date.now();
+  if(db){db.prepare('INSERT INTO projects(id,json,updated_at) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at').run(project.id,JSON.stringify(project),project.updatedAt);return project;}
   const file = resolve(dir, 'project.json');
   writeFileSync(`${file}.tmp`, JSON.stringify(project, null, 2)); renameSync(`${file}.tmp`, file);
   return project;
 }
 export function read(id: string): Project {
-  const project=JSON.parse(readFileSync(resolve(projectDir(id), 'project.json'), 'utf8')) as Project;
+  const json=db?(db.prepare('SELECT json FROM projects WHERE id=?').get(id) as {json:string}|undefined)?.json:readFileSync(resolve(projectDir(id), 'project.json'), 'utf8');
+  if(!json)throw new Error('项目不存在');
+  const project=JSON.parse(json) as Project;
   project.styleId ||= 'legacy-blue';
   project.narrativeMode ||= 'legal-case';
   project.layoutTemplate ||= 'text-illustration';
@@ -74,11 +82,13 @@ export function read(id: string): Project {
   return project;
 }
 export function list(): Project[] {
+  if(db)return (db.prepare('SELECT id FROM projects ORDER BY updated_at DESC').all() as {id:string}[]).map(row=>read(row.id));
   mkdirSync(root, { recursive: true });
   return readdirSync(root).filter(id => z.string().uuid().safeParse(id).success)
     .flatMap(id => { try { return [read(id)]; } catch { return []; } }).sort((a,b) => b.updatedAt-a.updatedAt);
 }
 export function create(title: string, source: string, styleId: StyleId = 'colored-pencil-diary', narrativeMode: NarrativeMode = 'legal-case', layoutTemplate: LayoutTemplate = 'text-illustration'): Project {
+  if(layoutTemplate==='legal-carousel-v2' && narrativeMode!=='legal-case')throw new Error('法律轮播模板仅适用于法律案例');
   return save({id: randomUUID(), title, source, styleId, narrativeMode, layoutTemplate, hideHeaderFooter:false, pages: [], revision: 1, state: 'drafting', phase:'draft',
     scriptApproved:false, sampleApproved:false, referenceWorkflowVersion:1, references:[], referencesApproved:false,
     musicId:null, volume:0.18, createdAt:Date.now(), updatedAt:Date.now()});
@@ -87,11 +97,19 @@ function invalidate(page: Page) {
   page.imageVersion++; delete page.image; delete page.error; delete page.generationMs;
   delete page.codexJobId; delete page.provider; page.status='idle';
 }
+function lineCount(value:string,limit:number):number {
+  let count=1,width=0;
+  for(const ch of value){if(ch==='\n'){count++;width=0;continue;}const next=/[\u0000-\u00ff]/.test(ch)?.56:1;if(width+next>limit){count++;width=0;}width+=next;}
+  return count;
+}
 export function update(id: string, input: unknown): Project {
   const value = editSchema.parse(input); const project = read(id);
   if (project.revision !== value.revision) throw new Error('内容已有更新，请刷新后重试');
   if (project.narrativeMode !== value.narrativeMode) throw new Error('口吻在创建后不可更改，请新建项目');
   if (project.layoutTemplate !== value.layoutTemplate) throw new Error('画面模板在创建后不可更改，请新建项目');
+  if(project.layoutTemplate==='legal-carousel-v2')for(const page of value.pages){
+    if(lineCount(page.title,6.5)>2 || page.body.length>42 || lineCount(page.body,12)>4 || (page.body.match(/[。！？!?]/g)||[]).length>2)throw new Error('法律轮播每页标题最多两行，正文最多两句、42字、4行');
+  }
   if (!['script','references','sample','done','failed'].includes(project.state)) throw new Error('制作中暂不可编辑，请等待当前步骤完成');
   if (new Set(value.pages.map(p=>p.id)).size !== value.pages.length) throw new Error('页面 ID 重复');
   if (project.referenceWorkflowVersion && value.references) {
