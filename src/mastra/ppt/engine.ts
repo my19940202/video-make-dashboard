@@ -9,6 +9,7 @@ import { pageSchema, projectDir, read, save, musicFile, type Project, type Page,
 import { generateImage } from './draw-things';
 import { generateCodexImage, type ImageReference } from './codex-image';
 import { generateCloudflareImage } from './cloudflare-image';
+import { generateReplicateImage } from './replicate-image';
 import { putObject, putFile } from './r2';
 import { reserveImage } from './auth';
 import { imageSettings } from './settings';
@@ -65,12 +66,17 @@ async function imageReference(id:string,revision:number,referenceId:string):Prom
   const p=current(id,revision); const ref=p.references?.find(x=>x.id===referenceId);
   if(!ref) throw new Error('参考图不存在');
   if(ref.image && existsSync(resolve(projectDir(id),ref.image))) return;
-  if(imageSettings().provider==='draw-things' && !ref.codexJobId) throw new Error('本机 Draw Things 不支持参考拼板');
+  const provider=ref.codexJobId?'codex':ref.replicatePredictionId?'replicate':imageSettings().provider;
+  if(provider==='draw-things') throw new Error('本机 Draw Things 不支持参考拼板');
   try {
-    if(process.env.SAAS_MODE==='1')reserveImage(id);
-    mutateReference(id,revision,referenceId,{status:'running',provider:'codex'});
-    const result=imageSettings().provider==='cloudflare'
+    if(process.env.SAAS_MODE==='1' && !ref.codexJobId && !ref.replicatePredictionId)reserveImage(id);
+    mutateReference(id,revision,referenceId,{status:'running',provider});
+    const result=provider==='cloudflare'
       ? await generateCloudflareImage({prompt:referencePrompt(p,ref),width:960,height:960,references:styleReference({...p,layoutTemplate:'text-illustration'}).map(r=>r.bytes)})
+      : provider==='replicate'
+      ? await generateReplicateImage({prompt:referencePrompt(p,ref),width:960,height:960,
+        references:styleReference({...p,layoutTemplate:'text-illustration'}).map(r=>r.bytes),
+        existingPredictionId:ref.replicatePredictionId,onPrediction:predictionId=>mutateReference(id,revision,referenceId,{replicatePredictionId:predictionId})})
       : await generateCodexImage({prompt:referencePrompt(p,ref),width:960,height:960,
       references:styleReference({...p,layoutTemplate:'text-illustration'}),key:`story-ppt:${id}:ref:${ref.id}:${ref.imageVersion}`,
       existingJobId:ref.codexJobId,onJob:jobId=>mutateReference(id,revision,referenceId,{codexJobId:jobId})});
@@ -84,12 +90,16 @@ export async function imagePage(id:string, revision:number, pageId:string):Promi
   const p=current(id,revision); const page=p.pages.find(x=>x.id===pageId)!;
   if(page.image && existsSync(resolve(projectDir(id),page.image))) return;
   try {
-    if(process.env.SAAS_MODE==='1')reserveImage(id);
-    const provider=page.codexJobId?'codex':imageSettings().provider;
+    if(process.env.SAAS_MODE==='1' && !page.codexJobId && !page.replicatePredictionId)reserveImage(id);
+    const provider=page.codexJobId?'codex':page.replicatePredictionId?'replicate':imageSettings().provider;
     mutatePage(id,revision,pageId,{status:'running',provider});
     const prompt=imagePrompt(p.styleId,page.prompt,p.narrativeMode);
     const {bytes,durationMs}=provider==='cloudflare'
       ? await generateCloudflareImage({prompt,width:imageSize(p).width,height:imageSize(p).height,references:pageReferences(p,page).map(r=>r.bytes)})
+      : provider==='replicate'
+      ? await generateReplicateImage({prompt,width:imageSize(p).width,height:imageSize(p).height,
+        references:pageReferences(p,page).map(r=>r.bytes),existingPredictionId:page.replicatePredictionId,
+        onPrediction:predictionId=>mutatePage(id,revision,pageId,{replicatePredictionId:predictionId})})
       : provider==='codex'
       ? await generateCodexImage({prompt,width:imageSize(p).width,height:imageSize(p).height,
         references:pageReferences(p,page),key:`story-ppt:${id}:page:${page.id}:${page.imageVersion}`,
@@ -176,10 +186,10 @@ export function approve(id:string, action:string, revision:number, pageId?:strin
     const ref=p.references?.find(r=>r.id===referenceId); if(!ref) throw new Error('参考图不存在');
     if(!p.scriptApproved) throw new Error('请先确认脚本');
     if(imageSettings().provider==='draw-things') throw new Error('当前生图引擎不支持参考图');
-    ref.imageVersion++; delete ref.image; delete ref.error; delete ref.codexJobId; ref.status='idle';
+    ref.imageVersion++; delete ref.image; delete ref.error; delete ref.codexJobId; delete ref.replicatePredictionId; ref.status='idle';
     p.referencesApproved=false;
     for(const page of p.pages) if((page.characterIds||[]).includes(ref.id) || page.locationId===ref.id) {
-      page.imageVersion++; delete page.image; delete page.codexJobId; page.status='idle';
+      page.imageVersion++; delete page.image; delete page.codexJobId; delete page.replicatePredictionId; page.status='idle';
       if(page===p.pages[0]) p.sampleApproved=false;
     }
     p.phase='references'; p.state='references-generating';
@@ -190,15 +200,16 @@ export function approve(id:string, action:string, revision:number, pageId?:strin
     const page=p.pages.find(s=>s.id===pageId); if(!page) throw new Error('页面不存在');
     if(!p.scriptApproved) throw new Error('请先确认脚本');
     const affected=page===p.pages[0] ? p.pages : [page];
-    for(const item of affected) { item.imageVersion++; delete item.image; delete item.codexJobId; delete item.error; item.status='idle'; }
+    for(const item of affected) { item.imageVersion++; delete item.image; delete item.codexJobId; delete item.replicatePredictionId; delete item.error; item.status='idle'; }
     if(page===p.pages[0]) p.sampleApproved=false;
     p.phase=p.sampleApproved?'produce':'sample'; p.state=p.sampleApproved?'producing':'sample-generating';
   } else if(action==='retry' || action==='render') {
     if(action==='render' && !p.sampleApproved) throw new Error('请先确认样稿');
     for(const page of p.pages) if(page.status==='failed') {
-      page.imageVersion++; delete page.codexJobId; delete page.error; page.status='idle';
+      page.imageVersion++; delete page.codexJobId; delete page.replicatePredictionId; delete page.error; page.status='idle';
     }
     for(const ref of p.references||[]) if(ref.status==='failed') {
+      if(ref.error && /Replicate 生图(失败|已取消)|Replicate 图片比例不符|Replicate 未返回/.test(ref.error))delete ref.replicatePredictionId;
       delete ref.error; ref.status='idle';
     }
     p.phase=action==='render'?'produce':p.phase;

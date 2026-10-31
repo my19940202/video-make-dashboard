@@ -40,11 +40,11 @@ export type Page = z.infer<typeof pageSchema> & {
   imageVersion: number; image?: string;
   status: 'idle'|'running'|'done'|'failed'; error?: string;
   generationMs?: number;
-  provider?: 'draw-things'|'codex'|'cloudflare'; codexJobId?: string;
+  provider?: 'draw-things'|'codex'|'cloudflare'|'replicate'; codexJobId?: string; replicatePredictionId?: string;
 };
 export type ReferenceAsset = z.infer<typeof referenceEditSchema> & {
   imageVersion: number; image?: string; status: 'idle'|'running'|'done'|'failed';
-  error?: string; generationMs?: number; provider?: 'draw-things'|'codex'|'cloudflare'; codexJobId?: string;
+  error?: string; generationMs?: number; provider?: 'draw-things'|'codex'|'cloudflare'|'replicate'; codexJobId?: string; replicatePredictionId?: string;
 };
 export type Project = {
   id: string; title: string; source: string; styleId: StyleId; narrativeMode: NarrativeMode; layoutTemplate: LayoutTemplate; hideHeaderFooter: boolean; pages: Page[]; revision: number;
@@ -95,7 +95,7 @@ export function create(title: string, source: string, styleId: StyleId = 'colore
 }
 function invalidate(page: Page) {
   page.imageVersion++; delete page.image; delete page.error; delete page.generationMs;
-  delete page.codexJobId; delete page.provider; page.status='idle';
+  delete page.codexJobId; delete page.replicatePredictionId; delete page.provider; page.status='idle';
 }
 function lineCount(value:string,limit:number):number {
   let count=1,width=0;
@@ -144,7 +144,7 @@ export function update(id: string, input: unknown): Project {
     const linksChanged=JSON.stringify(old?.characterIds||[])!==JSON.stringify(p.characterIds||[]) || (old?.locationId||null)!==(p.locationId||null);
     return old && old.prompt === p.prompt && !styleChanged && !linksChanged ? {...old, ...p} : {...p, imageVersion:(old?.imageVersion || 0)+1, status:'idle'};
   });
-  for(const page of project.pages) if(page.status==='idle') { delete page.image; delete page.codexJobId; delete page.provider; }
+  for(const page of project.pages) if(page.status==='idle') { delete page.image; delete page.codexJobId; delete page.replicatePredictionId; delete page.provider; }
   const changedSample = styleChanged || (first && (first.id !== project.pages[0]?.id || first.prompt !== project.pages[0]?.prompt));
   if (changedSample) {
     project.sampleApproved = false;

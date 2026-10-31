@@ -4,10 +4,10 @@
 
 ## 首次部署
 
-1. 将域名解析到 Lighthouse。安装 Docker Engine 与 Compose，开放 TCP 80/443；SSH 仅允许管理地址。Resend 中验证发信域名，准备 Cloudflare AI Token 和私有 R2 桶及其 S3 凭据。
+1. 将域名解析到 Lighthouse。安装 Docker Engine 与 Compose，开放 TCP 80/443；SSH 仅允许管理地址。Resend 中验证发信域名，准备 Replicate API Token 和私有 R2 桶及其 S3 凭据。
 2. 把仓库放在服务器，复制 `.env.production.example` 为 `.env.production`，填写真实值。`AUTH_CODE_SECRET` 使用至少 32 字符的随机值。`.env.production` 不提交到版本库，文件权限设为 600。
 3. 运行 `docker compose --env-file .env.production build` 和 `docker compose --env-file .env.production up -d`。浏览器访问 `https://<DOMAIN>/workbench`，测试邮箱验证码登录、生成参考图和完整视频导出。首次登录会自动创建用户。
-4. 部署后检查 `docker compose logs app worker`，确认没有数据库、Resend、Cloudflare AI 或 R2 凭据错误。生产环境通过 Caddy 仅暴露工作台、认证和视频 API；Mastra 其余调试接口不开放。
+4. 部署后检查 `docker compose logs app worker`，确认没有数据库、Resend、Replicate 或 R2 凭据错误。生产环境通过 Caddy 仅暴露工作台、认证和视频 API；Mastra 其余调试接口不开放。
 
 ## 更新与备份
 

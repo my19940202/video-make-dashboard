@@ -1,0 +1,11 @@
+{$DOMAIN} {
+  encode zstd gzip
+  redir / /workbench
+  @public path / /workbench /workbench/* /auth/* /ppt/*
+  handle @public {
+    reverse_proxy app:4112
+  }
+  handle {
+    respond "Not found" 404
+  }
+}

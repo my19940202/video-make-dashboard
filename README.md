@@ -64,7 +64,9 @@
 
 ### 生图与版式
 
-视频工作台使用本机 Draw Things HTTP 服务，默认 `http://127.0.0.1:7860`，可通过 `DRAW_THINGS_URL` 修改。先在 Draw Things 中开启 HTTP 服务并选择 Z-Image-Turbo 模型。
+视频工作台默认通过 Replicate 的 `openai/gpt-image-2` 生图。设置服务端 `REPLICATE_API_TOKEN`；本地和生产环境均可设置 `IMAGE_PROVIDER=replicate`，此环境变量优先于本地旧设置。请求固定使用 `quality: low`，方图传 `1:1`，法律轮播和满幅模板传 `3:4`；模型返回的 PNG 直接使用，不裁剪。参考图会缩小并压缩后提交。未完成任务保存预测 ID 并在恢复后继续查询。Codex、Draw Things 与 Cloudflare 仍可用 `IMAGE_PROVIDER` 选择；切换生图服务不会重画已有图片。
+
+如使用本机 Draw Things，可设置 `IMAGE_PROVIDER=draw-things`。其 HTTP 服务默认 `http://127.0.0.1:7860`，可通过 `DRAW_THINGS_URL` 修改；先在 Draw Things 中开启 HTTP 服务并选择 Z-Image-Turbo 模型。
 
 彩铅日记漫画、水墨写意、暖色几何扁平绘本分别使用项目内 `assets/style-references/` 下对应的 960×960 PNG 参考图。它们从 `story-to-handdrawn-video/references/style-examples/standard/` 的样式示例通过 `sips -z 960 960` 缩放而来。满幅模板使用 `assets/style-references/portrait/` 下的 576×768 参考图，由方图缩至 768×768 后居中裁切得到。生成时调用 `/sdapi/v1/img2img`，提交画面提示词、对应图片的 base64 `init_images`、目标尺寸、`strength: 0.96`、20 steps，请求超时 600 秒。图文模板目标为 960×960，满幅模板目标为 576×768。选用的 Z-Image-Turbo 模型由 Draw Things 当前设置决定。参考图约束画风，但不能保证人物身份或所有细节完全一致，首张样稿仍需人工确认。
 

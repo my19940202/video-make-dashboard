@@ -1,6 +1,6 @@
 import {pageSvg} from '/workbench/layout.mjs';
 const $=id=>document.getElementById(id);
-let project=null,selected=0,dirty=false,busy=false,music=[],polling=false,settings={provider:'cloudflare'};
+let project=null,selected=0,dirty=false,busy=false,music=[],polling=false,settings={provider:'replicate'};
 document.body.classList.add('auth-loading');
 const labels={drafting:'正在整理脚本',script:'等待确认脚本','references-generating':'正在生成参考图',references:'等待审核参考图','sample-generating':'正在生成样稿',sample:'等待确认样稿',producing:'正在生成配图',rendering:'正在合成视频',done:'可以查看成片',failed:'制作中断'};
 const generating=()=>project && ['drafting','references-generating','sample-generating','producing','rendering'].includes(project.state);
