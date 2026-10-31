@@ -1,4 +1,4 @@
-name: Check and deploy Lighthouse
+name: Check-deploy Lighthouse
 
 on:
   pull_request:
